@@ -922,7 +922,11 @@ async function autoMatch() {
       setStatus(`OCR 중: ${i + 1}/${unassigned.length} — ${r.name}`, "");
       try {
         const { data } = await worker.recognize(r.dataUrl);
-        const text = data.text || "";
+        const rawText = data.text || "";
+        // Normalize OCR artifacts: "17. 000" / "12, 100" / "17 000" → "17,000"
+        const text = rawText
+          .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
+          .replace(/(\d)\s+(\d{3})(?!\d)/g, "$1,$2");
         // Extract candidate amounts
         const candidates = new Set();
         for (const m of text.matchAll(/(\d{1,3}(?:,\d{3})+|\d{4,7})/g)) {
