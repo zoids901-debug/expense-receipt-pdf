@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>법인카드 영수증 자동정리</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --panel: #ffffff;
+    --border: #e2e4e9;
+    --primary: #2d6cdf;
+    --primary-dark: #1f54b3;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --danger: #d83a3a;
+    --good: #2f9e44;
+    --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  .app {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 100vh;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 4px;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  section.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow);
+  }
+  .step-label {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+    font-size: 13px;
+  }
+  textarea#paste-box {
+    width: 100%;
+    min-height: 96px;
+    max-height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 12.5px;
+    resize: vertical;
+  }
+  textarea#paste-box:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: -1px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  button {
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: background 0.1s;
+  }
+  button:hover { background: #f5f6f8; }
+  button.primary {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    font-weight: 600;
+  }
+  button.primary:hover { background: var(--primary-dark); }
+  button.primary:disabled {
+    background: #aab4c4;
+    border-color: #aab4c4;
+    cursor: not-allowed;
+  }
+  .info { color: var(--muted); font-size: 12.5px; }
+  table.entries {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.entries th {
+    background: #f9fafb;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    color: #444;
+  }
+  table.entries td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f0f1f4;
+    vertical-align: middle;
+  }
+  table.entries tr:hover td { background: #fafbfc; }
+  table.entries .col-amount { text-align: right; font-variant-numeric: tabular-nums; }
+  table.entries .col-receipt {
+    width: 200px;
+    text-align: center;
+  }
+  .receipt-cell {
+    border: 1px dashed #d0d3d9;
+    border-radius: 6px;
+    padding: 6px;
+    min-height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 12px;
+    background: #fcfcfd;
+    transition: all 0.1s;
+  }
+  .receipt-cell.has-image {
+    border-style: solid;
+    border-color: var(--good);
+    background: #f5fbf6;
+    flex-direction: column;
+    gap: 4px;
+    cursor: grab;
+  }
+  .receipt-cell.has-image img {
+    max-width: 70px;
+    max-height: 50px;
+    object-fit: contain;
+    border-radius: 3px;
+  }
+  .receipt-cell.has-image .filename {
+    font-size: 10px;
+    color: #555;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .receipt-cell.drag-over {
+    border-color: var(--primary);
+    background: #eaf2fe;
+    color: var(--primary);
+  }
+  .thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+    min-height: 160px;
+    padding: 12px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    background: #fcfcfd;
+    transition: all 0.1s;
+  }
+  .thumb-grid.drag-over {
+    border-color: var(--primary);
+    background: #eaf2fe;
+  }
+  .thumb-grid:empty::before {
+    content: "이곳에 영수증 파일·폴더를 드래그하거나, 위 버튼을 사용하세요";
+    color: var(--muted);
+    font-size: 13px;
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 36px 12px;
+  }
+  .thumb {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: grab;
+    user-select: none;
+    transition: all 0.1s;
+  }
+  .thumb:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .thumb.dragging { opacity: 0.4; }
+  .thumb img {
+    width: 100%;
+    height: 90px;
+    object-fit: contain;
+    background: #f4f5f7;
+    border-radius: 3px;
+  }
+  .thumb .filename {
+    font-size: 10.5px;
+    color: #555;
+    text-align: center;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .toolbar .count { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+  input[type="text"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  input[type="text"]:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  .output-row { display: flex; gap: 8px; align-items: center; }
+  .output-row input { flex: 1; }
+  #status {
+    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--muted);
+    min-height: 1.4em;
+  }
+  #status.error { color: var(--danger); }
+  #status.success { color: var(--good); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #eef2f7;
+    border-radius: 10px;
+    font-size: 11.5px;
+    color: #555;
+  }
+  .badge.miss { background: #fdecec; color: var(--danger); }
+  .badge.ok { background: #e7f6ec; color: var(--good); }
+  .footer {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 16px;
+  }
+  .footer a { color: var(--muted); }
+  .ctx-menu {
+    position: fixed;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+    padding: 4px 0;
+    z-index: 1000;
+    min-width: 160px;
+    font-size: 13px;
+  }
+  .ctx-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-radius: 0;
+    padding: 7px 12px;
+    background: transparent;
+  }
+  .ctx-menu button:hover { background: #f3f5f9; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>법인카드 영수증 자동정리</h1>
+    <span class="sub">하이웍스 표 + 영수증 → A4 PDF 자동 생성</span>
+  </header>
+
+  <section class="panel">
+    <div class="step-label">① 하이웍스 거래내역 표를 복사 → 아래에 붙여넣기 (Ctrl+V)</div>
+    <textarea id="paste-box" placeholder="예시 (탭 구분 표 또는 줄 단위 포맷 모두 지원)
+여비교통비	2026-04-23	KCP(통신판매)	공용주차장 비용		4,900	자동
+..."></textarea>
+    <div class="row">
+      <button id="btn-parse" class="primary">② 파싱 ▶</button>
+      <span class="info" id="parse-info"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="step-label">③ 거래내역 — 아래 영수증 썸네일을 표의 영수증 칸에 드래그하세요</div>
+    <table class="entries">
+      <thead>
+        <tr>
+          <th>날짜</th>
+          <th>계정과목</th>
+          <th>거래처</th>
+          <th class="col-amount">금액</th>
+          <th>적요</th>
+          <th class="col-receipt">영수증</th>
+        </tr>
+      </thead>
+      <tbody id="entries-tbody">
+        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">표를 붙여넣고 파싱 버튼을 누르세요</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <span class="step-label" style="margin: 0;">④ 미할당 영수증</span>
+      <button id="btn-add-files">📄 파일 추가</button>
+      <button id="btn-add-folder">📁 폴더 추가</button>
+      <button id="btn-clear-receipts">모두 지우기</button>
+      <span class="count" id="receipts-count">0개</span>
+    </div>
+    <div id="receipts-panel" class="thumb-grid"></div>
+    <input type="file" id="file-input" multiple accept="image/*,application/pdf" style="display:none">
+    <input type="file" id="folder-input" webkitdirectory directory multiple style="display:none">
+  </section>
+
+  <section class="panel">
+    <div class="step-label">⑤ PDF 생성</div>
+    <div class="output-row">
+      <span style="font-size:13px;">파일명:</span>
+      <input type="text" id="filename" value="법인카드_영수증.pdf">
+      <button id="btn-build" class="primary">⑥ PDF 생성 & 다운로드</button>
+    </div>
+    <div id="status"></div>
+  </section>
+</div>
+
+<div class="footer">
+  데이터는 브라우저에서만 처리되며 외부로 전송되지 않습니다 ·
+  <a href="https://github.com/" target="_blank">GitHub</a>
+</div>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs" type="module"></script>
+
+<script type="module">
+import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
+window.pdfjsLib = pdfjsLib;
+window.dispatchEvent(new Event("pdfjs-ready"));
+</script>
+
+<script>
+// ────────────────────────────────────────────────────────────────
+// State
+// ────────────────────────────────────────────────────────────────
+const CATEGORIES = new Set([
+  "여비교통비", "베이커리개발비", "메뉴개발비", "복리후생비",
+  "통신비", "소모품비", "접대비", "광고선전비", "교육훈련비",
+  "수수료", "운반비", "도서인쇄비", "회의비", "차량유지비",
+  "사무용품비", "지급수수료", "외주용역비",
+]);
+const SUPPORTED_EXT = ["jpg", "jpeg", "png", "pdf", "bmp", "webp"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const AMOUNT_RE = /^[\d,]+$/;
+
+const state = {
+  entries: [],         // [{date, category, vendor, memo, amount, receiptId}]
+  receipts: new Map(), // id → {id, file, name, dataUrl, kind}
+  nextId: 1,
+};
+
+let pdfjsReady = false;
+window.addEventListener("pdfjs-ready", () => { pdfjsReady = true; });
+
+// ────────────────────────────────────────────────────────────────
+// Parser
+// ────────────────────────────────────────────────────────────────
+function detectFormat(raw) {
+  let tabLines = 0;
+  for (const ln of raw.split(/\r?\n/)) {
+    if (ln.includes("\t") && (ln.match(/\t/g) || []).length >= 4) tabLines++;
+  }
+  return tabLines >= 3 ? "A" : "B";
+}
+
+function parseA(raw) {
+  const out = [];
+  let cur = null;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line.startsWith("계정과목") || line.startsWith("거래 내역")) continue;
+    let cells = line.split("\t").map(c => c.trim());
+    if (cells.includes("소계") || cells.includes("합계")) continue;
+    while (cells.length && cells[cells.length - 1] === "") cells.pop();
+    if (cells.length && CATEGORIES.has(cells[0])) {
+      cur = cells[0];
+      cells = cells.slice(1);
+    }
+    if (!cells.length || !DATE_RE.test(cells[0])) continue;
+    const date = cells[0];
+    const vendor = cells[1] || "";
+    const memo = cells[2] || "";
+    let amount = 0;
+    for (let j = 3; j < cells.length; j++) {
+      if (AMOUNT_RE.test(cells[j])) { amount = parseInt(cells[j].replace(/,/g, ""), 10); break; }
+    }
+    out.push({ category: cur || "", date, vendor, memo, amount });
+  }
+  return out;
+}
+
+function parseB(raw) {
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let i = 0;
+  while (i < lines.length && !DATE_RE.test(lines[i])) i++;
+  const out = [];
+  while (i < lines.length) {
+    if (lines[i].startsWith("합계") || lines[i].includes("총 사용 금액")) break;
+    if (!DATE_RE.test(lines[i])) { i++; continue; }
+    if (i + 6 >= lines.length) break;
+    const date = lines[i];
+    const vendor = lines[i + 1];
+    const amountRaw = lines[i + 2].replace(/,/g, "");
+    const category = lines[i + 3];
+    const memo = lines[i + 5];
+    if (!AMOUNT_RE.test(lines[i + 2].replace(/,/g, ""))) { i++; continue; }
+    if (!CATEGORIES.has(category)) { i++; continue; }
+    out.push({
+      category, date, vendor, memo,
+      amount: parseInt(amountRaw, 10) || 0,
+    });
+    i += 7;
+  }
+  return out;
+}
+
+function parseTable(raw) {
+  const fmt = detectFormat(raw);
+  let entries = fmt === "A" ? parseA(raw) : parseB(raw);
+  entries.sort((a, b) => a.date.localeCompare(b.date) || a.category.localeCompare(b.category) || a.amount - b.amount);
+  return { entries, fmt };
+}
+
+// ────────────────────────────────────────────────────────────────
+// Receipt management
+// ────────────────────────────────────────────────────────────────
+async function fileToReceipt(file) {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (!SUPPORTED_EXT.includes(ext)) return null;
+  const id = `r${state.nextId++}`;
+  const kind = ext === "pdf" ? "pdf" : "image";
+  let dataUrl;
+  if (kind === "pdf") {
+    if (!pdfjsReady) await new Promise(r => window.addEventListener("pdfjs-ready", r, { once: true }));
+    const buf = await file.arrayBuffer();
+    const doc = await window.pdfjsLib.getDocument({ data: buf }).promise;
+    const page = await doc.getPage(1);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  } else {
+    dataUrl = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsDataURL(file);
+    });
+  }
+  return { id, file, name: file.name, dataUrl, kind };
+}
+
+async function addFiles(fileList) {
+  const status = document.getElementById("status");
+  status.textContent = "영수증 처리 중…";
+  status.className = "";
+  let added = 0;
+  for (const f of fileList) {
+    try {
+      const r = await fileToReceipt(f);
+      if (r) {
+        state.receipts.set(r.id, r);
+        added++;
+      }
+    } catch (e) {
+      console.warn("receipt error:", f.name, e);
+    }
+  }
+  status.textContent = `영수증 ${added}개 추가됨`;
+  status.className = "success";
+  renderReceipts();
+}
+
+async function addFromDataTransfer(items) {
+  // Use webkitGetAsEntry to support folder drops
+  const files = [];
+  const promises = [];
+  for (const it of items) {
+    if (it.kind !== "file") continue;
+    const entry = it.webkitGetAsEntry?.();
+    if (entry) {
+      promises.push(walkEntry(entry, files));
+    } else {
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  await Promise.all(promises);
+  await addFiles(files);
+}
+
+async function walkEntry(entry, out) {
+  if (entry.isFile) {
+    return new Promise(res => entry.file(f => { out.push(f); res(); }));
+  }
+  if (entry.isDirectory) {
+    const reader = entry.createReader();
+    return new Promise((res) => {
+      const all = [];
+      const readBatch = () => {
+        reader.readEntries(async (entries) => {
+          if (entries.length === 0) {
+            await Promise.all(all.map(e => walkEntry(e, out)));
+            res();
+            return;
+          }
+          all.push(...entries);
+          readBatch();
+        });
+      };
+      readBatch();
+    });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+// Rendering
+// ────────────────────────────────────────────────────────────────
+function renderEntries() {
+  const tbody = document.getElementById("entries-tbody");
+  if (state.entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">표를 붙여넣고 파싱 버튼을 누르세요</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  state.entries.forEach((e, idx) => {
+    const tr = document.createElement("tr");
+    const md = e.date.slice(5).replace("-0", "/").replace("-", "/");
+    tr.innerHTML = `
+      <td>${escapeHtml(md)}</td>
+      <td>${escapeHtml(e.category)}</td>
+      <td>${escapeHtml(e.vendor)}</td>
+      <td class="col-amount">${e.amount.toLocaleString()}</td>
+      <td>${escapeHtml(e.memo)}</td>
+      <td class="col-receipt"></td>
+    `;
+    const cell = tr.querySelector(".col-receipt");
+    const drop = document.createElement("div");
+    drop.className = "receipt-cell";
+    drop.dataset.entryIdx = idx;
+    if (e.receiptId && state.receipts.has(e.receiptId)) {
+      const r = state.receipts.get(e.receiptId);
+      drop.classList.add("has-image");
+      drop.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
+      drop.draggable = true;
+      drop.addEventListener("dragstart", ev => {
+        ev.dataTransfer.setData("application/x-receipt-id", r.id);
+        ev.dataTransfer.setData("application/x-from-entry", String(idx));
+        ev.dataTransfer.effectAllowed = "move";
+      });
+      drop.addEventListener("contextmenu", ev => {
+        ev.preventDefault();
+        showContextMenu(ev.clientX, ev.clientY, [
+          { label: "할당 해제", action: () => unassignFromEntry(idx) },
+        ]);
+      });
+    } else {
+      drop.textContent = "여기에 드롭";
+    }
+    setupDropTarget(drop, idx);
+    cell.appendChild(drop);
+    tbody.appendChild(tr);
+  });
+}
+
+function setupDropTarget(el, entryIdx) {
+  el.addEventListener("dragover", ev => {
+    if (ev.dataTransfer.types.includes("application/x-receipt-id")) {
+      ev.preventDefault();
+      el.classList.add("drag-over");
+    }
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+  el.addEventListener("drop", ev => {
+    ev.preventDefault();
+    el.classList.remove("drag-over");
+    const rid = ev.dataTransfer.getData("application/x-receipt-id");
+    const fromEntry = ev.dataTransfer.getData("application/x-from-entry");
+    if (!rid) return;
+    assignToEntry(entryIdx, rid, fromEntry === "" ? null : parseInt(fromEntry, 10));
+  });
+}
+
+function renderReceipts() {
+  const panel = document.getElementById("receipts-panel");
+  panel.innerHTML = "";
+  const assigned = new Set(state.entries.map(e => e.receiptId).filter(Boolean));
+  let count = 0;
+  for (const r of state.receipts.values()) {
+    if (assigned.has(r.id)) continue;
+    count++;
+    const div = document.createElement("div");
+    div.className = "thumb";
+    div.draggable = true;
+    div.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
+    div.addEventListener("dragstart", ev => {
+      ev.dataTransfer.setData("application/x-receipt-id", r.id);
+      ev.dataTransfer.setData("application/x-from-entry", "");
+      ev.dataTransfer.effectAllowed = "move";
+      div.classList.add("dragging");
+    });
+    div.addEventListener("dragend", () => div.classList.remove("dragging"));
+    panel.appendChild(div);
+  }
+  document.getElementById("receipts-count").textContent = `미할당: ${count}개 / 총 ${state.receipts.size}개`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// ────────────────────────────────────────────────────────────────
+// Assignment
+// ────────────────────────────────────────────────────────────────
+function assignToEntry(entryIdx, receiptId, fromEntryIdx) {
+  // If target already has a receipt, swap
+  const target = state.entries[entryIdx];
+  const prevId = target.receiptId;
+  target.receiptId = receiptId;
+  if (fromEntryIdx !== null && fromEntryIdx !== undefined && !isNaN(fromEntryIdx)) {
+    state.entries[fromEntryIdx].receiptId = prevId || null;
+  }
+  renderEntries();
+  renderReceipts();
+}
+
+function unassignFromEntry(entryIdx) {
+  state.entries[entryIdx].receiptId = null;
+  renderEntries();
+  renderReceipts();
+}
+
+// ────────────────────────────────────────────────────────────────
+// Context menu
+// ────────────────────────────────────────────────────────────────
+let ctxMenuEl = null;
+function showContextMenu(x, y, items) {
+  hideContextMenu();
+  ctxMenuEl = document.createElement("div");
+  ctxMenuEl.className = "ctx-menu";
+  ctxMenuEl.style.left = x + "px";
+  ctxMenuEl.style.top = y + "px";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    b.onclick = () => { hideContextMenu(); it.action(); };
+    ctxMenuEl.appendChild(b);
+  }
+  document.body.appendChild(ctxMenuEl);
+}
+function hideContextMenu() {
+  if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
+}
+document.addEventListener("click", hideContextMenu);
+
+// ────────────────────────────────────────────────────────────────
+// PDF generation
+// ────────────────────────────────────────────────────────────────
+const FONT_URL = "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Bold.ttf";
+
+let cachedFontBytes = null;
+async function loadKoreanFont() {
+  if (cachedFontBytes) return cachedFontBytes;
+  const status = document.getElementById("status");
+  status.textContent = "한글 폰트 로딩 중… (최초 1회만)";
+  const resp = await fetch(FONT_URL);
+  if (!resp.ok) throw new Error("폰트 로딩 실패");
+  cachedFontBytes = new Uint8Array(await resp.arrayBuffer());
+  return cachedFontBytes;
+}
+
+function makeLabel(e) {
+  const date = e.date.slice(5).replace(/^0/, "").replace("-0", "/").replace("-", "/");
+  const parts = [`${date} ${e.category}`];
+  if (e.memo) parts.push(`-${e.memo}`);
+  if (e.vendor) parts.push(` (${e.vendor})`);
+  return parts.join("");
+}
+
+async function dataUrlToImageBytes(dataUrl) {
+  // Convert dataURL to Uint8Array, force JPEG for size
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+  // Limit to ~1100px max edge
+  const maxEdge = 1100;
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.78));
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), width: w, height: h };
+}
+
+async function buildPdf() {
+  if (state.entries.length === 0) {
+    setStatus("먼저 거래내역을 파싱하세요.", "error");
+    return;
+  }
+  setStatus("PDF 생성 중…", "");
+  document.getElementById("btn-build").disabled = true;
+  try {
+    const { PDFDocument, rgb, StandardFonts } = PDFLib;
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(window.fontkit);
+    const fontBytes = await loadKoreanFont();
+    const font = await doc.embedFont(fontBytes, { subset: false });
+
+    const A4 = [595.28, 841.89]; // points
+    const PAGE_W = A4[0], PAGE_H = A4[1];
+    const MM = 2.83465;
+    const MARGIN = 12 * MM;
+    const COLS = 2, ROWS = 3;
+    const GAP_X = 8 * MM, GAP_Y = 10 * MM;
+    const LABEL_H = 9 * MM;
+    const CELL_W = (PAGE_W - 2 * MARGIN - GAP_X * (COLS - 1)) / COLS;
+    const CELL_H = (PAGE_H - 2 * MARGIN - GAP_Y * (ROWS - 1)) / ROWS;
+    const IMG_H = CELL_H - LABEL_H;
+    const PER_PAGE = COLS * ROWS;
+
+    let page = null;
+    for (let i = 0; i < state.entries.length; i++) {
+      const slot = i % PER_PAGE;
+      if (slot === 0) page = doc.addPage(A4);
+      const col = slot % COLS;
+      const row = Math.floor(slot / COLS);
+      const x = MARGIN + col * (CELL_W + GAP_X);
+      const y = PAGE_H - MARGIN - (row + 1) * CELL_H - row * GAP_Y;
+
+      const e = state.entries[i];
+      const label = makeLabel(e);
+      // Auto-shrink
+      let fontSize = 9;
+      while (fontSize > 6 && font.widthOfTextAtSize(label, fontSize) > CELL_W) fontSize -= 1;
+      page.drawText(label, {
+        x: x,
+        y: y + CELL_H - 4 * MM,
+        size: fontSize,
+        font,
+        color: rgb(0, 0, 0),
+      });
+
+      if (e.receiptId && state.receipts.has(e.receiptId)) {
+        const r = state.receipts.get(e.receiptId);
+        const { bytes, width, height } = await dataUrlToImageBytes(r.dataUrl);
+        const img = await doc.embedJpg(bytes);
+        const scale = Math.min(CELL_W / width, IMG_H / height);
+        const iw = width * scale;
+        const ih = height * scale;
+        const ix = x + (CELL_W - iw) / 2;
+        const iy = y + (IMG_H - ih) / 2;
+        page.drawImage(img, { x: ix, y: iy, width: iw, height: ih });
+      } else {
+        // Dashed placeholder
+        page.drawRectangle({
+          x, y, width: CELL_W, height: IMG_H,
+          borderColor: rgb(0.7, 0.7, 0.7),
+          borderWidth: 0.5,
+          borderDashArray: [3, 3],
+        });
+        const placeholder = "[ 영수증 누락 ]";
+        const pw = font.widthOfTextAtSize(placeholder, 11);
+        page.drawText(placeholder, {
+          x: x + (CELL_W - pw) / 2,
+          y: y + IMG_H / 2,
+          size: 11,
+          font,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+      }
+    }
+
+    const bytes = await doc.save();
+    const filename = document.getElementById("filename").value.trim() || "영수증.pdf";
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename.endsWith(".pdf") ? filename : filename + ".pdf";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    const missing = state.entries.filter(e => !e.receiptId).length;
+    setStatus(`✓ PDF 생성 완료 (${state.entries.length}건${missing ? `, 누락 ${missing}건` : ""})`, "success");
+  } catch (err) {
+    console.error(err);
+    setStatus("PDF 생성 실패: " + err.message, "error");
+  } finally {
+    document.getElementById("btn-build").disabled = false;
+  }
+}
+
+function setStatus(msg, kind) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = kind || "";
+}
+
+// ────────────────────────────────────────────────────────────────
+// Wiring
+// ────────────────────────────────────────────────────────────────
+document.getElementById("btn-parse").addEventListener("click", () => {
+  const raw = document.getElementById("paste-box").value;
+  if (!raw.trim()) { setStatus("표를 붙여넣어주세요.", "error"); return; }
+  try {
+    const { entries, fmt } = parseTable(raw);
+    // Preserve existing receipt assignments by date+amount
+    const oldByKey = new Map(state.entries.filter(e => e.receiptId).map(e => [`${e.date}_${e.amount}`, e.receiptId]));
+    state.entries = entries.map(e => ({ ...e, receiptId: oldByKey.get(`${e.date}_${e.amount}`) || null }));
+    document.getElementById("parse-info").textContent =
+      `포맷 ${fmt} • ${entries.length}건 • 합계 ${entries.reduce((s,e) => s+e.amount, 0).toLocaleString()}원`;
+    renderEntries();
+    renderReceipts();
+    setStatus("");
+  } catch (err) {
+    setStatus("파싱 실패: " + err.message, "error");
+  }
+});
+
+document.getElementById("btn-add-files").addEventListener("click", () => {
+  document.getElementById("file-input").click();
+});
+document.getElementById("file-input").addEventListener("change", async ev => {
+  await addFiles(ev.target.files);
+  ev.target.value = "";
+});
+document.getElementById("btn-add-folder").addEventListener("click", () => {
+  document.getElementById("folder-input").click();
+});
+document.getElementById("folder-input").addEventListener("change", async ev => {
+  await addFiles(ev.target.files);
+  ev.target.value = "";
+});
+document.getElementById("btn-clear-receipts").addEventListener("click", () => {
+  state.receipts.clear();
+  state.entries.forEach(e => e.receiptId = null);
+  renderEntries();
+  renderReceipts();
+});
+document.getElementById("btn-build").addEventListener("click", buildPdf);
+
+// Drag-drop on receipt panel
+const panel = document.getElementById("receipts-panel");
+["dragenter", "dragover"].forEach(ev => panel.addEventListener(ev, e => {
+  e.preventDefault();
+  if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("application/x-receipt-id")) {
+    panel.classList.add("drag-over");
+  }
+}));
+["dragleave", "drop"].forEach(ev => panel.addEventListener(ev, e => {
+  panel.classList.remove("drag-over");
+}));
+panel.addEventListener("drop", async e => {
+  e.preventDefault();
+  if (e.dataTransfer.types.includes("application/x-receipt-id")) {
+    // Returning a receipt from an entry
+    const rid = e.dataTransfer.getData("application/x-receipt-id");
+    const fromEntry = e.dataTransfer.getData("application/x-from-entry");
+    if (fromEntry !== "") unassignFromEntry(parseInt(fromEntry, 10));
+    return;
+  }
+  if (e.dataTransfer.items) {
+    await addFromDataTransfer(e.dataTransfer.items);
+  } else if (e.dataTransfer.files) {
+    await addFiles(e.dataTransfer.files);
+  }
+});
+
+// Drag-drop on whole window (also accepts files)
+window.addEventListener("dragover", e => {
+  if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+});
+window.addEventListener("drop", async e => {
+  if (e.target.closest("#receipts-panel") || e.target.closest(".receipt-cell")) return;
+  if (e.dataTransfer.types.includes("Files")) {
+    e.preventDefault();
+    if (e.dataTransfer.items) await addFromDataTransfer(e.dataTransfer.items);
+    else await addFiles(e.dataTransfer.files);
+  }
+});
+</script>
+</body>
+</html>
