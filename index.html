@@ -182,7 +182,7 @@
     background: #eaf2fe;
   }
   .thumb-grid:empty::before {
-    content: "이곳에 영수증 파일·폴더를 드래그하거나, 위 버튼을 사용하세요";
+    content: "여기에 영수증 사진이나 폴더를 끌어다 놓거나, 위의 [사진 선택] / [폴더 선택] 버튼을 누르세요";
     color: var(--muted);
     font-size: 13px;
     grid-column: 1 / -1;
@@ -291,6 +291,56 @@
     0%, 100% { box-shadow: 0 0 0 0 rgba(45, 108, 223, 0.4); }
     50% { box-shadow: 0 0 0 6px rgba(45, 108, 223, 0); }
   }
+  details.match-log {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0;
+    background: #fafbfc;
+  }
+  details.match-log[open] { background: white; }
+  details.match-log summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    user-select: none;
+  }
+  details.match-log summary:hover { background: #f3f5f9; }
+  .log-list {
+    padding: 4px 12px 10px;
+    font-size: 12px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .log-row {
+    padding: 6px 8px;
+    border-bottom: 1px solid #f0f1f4;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    align-items: center;
+  }
+  .log-row:last-child { border-bottom: none; }
+  .log-row.ok { background: #f5fbf6; }
+  .log-row.fail { background: #fef0f0; }
+  .log-row.suspect { background: #fff8e1; }
+  .log-row .name { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+  .log-row .detail { color: #555; font-size: 11px; }
+  .log-row .arrow { color: var(--muted); margin: 0 4px; }
+  .log-row .target { font-weight: 600; }
+  .log-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10.5px;
+    margin-left: 4px;
+    background: #eef2f7;
+    color: #555;
+  }
+  .log-tag.ok { background: #e7f6ec; color: var(--good); }
+  .log-tag.fail { background: #fdecec; color: var(--danger); }
+  .log-tag.suspect { background: #fff4d6; color: #b07300; }
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -339,18 +389,16 @@
   </header>
 
   <section class="panel">
-    <div class="step-label">① 하이웍스 거래내역 표를 복사 → 아래에 붙여넣기 (Ctrl+V)</div>
-    <textarea id="paste-box" placeholder="예시 (탭 구분 표 또는 줄 단위 포맷 모두 지원)
-여비교통비	2026-04-23	KCP(통신판매)	공용주차장 비용		4,900	자동
-..."></textarea>
+    <div class="step-label">① 하이웍스 거래내역 표를 복사해서 아래 칸에 붙여넣어주세요 (Ctrl+V)</div>
+    <textarea id="paste-box" placeholder="하이웍스의 거래내역 표를 복사해서 여기에 붙여넣으세요 (탭 구분 표 또는 줄 단위 형식 모두 지원)"></textarea>
     <div class="row">
-      <button id="btn-parse" class="primary">② 파싱 ▶</button>
+      <button id="btn-parse" class="primary">② 거래내역 불러오기</button>
       <span class="info" id="parse-info"></span>
     </div>
   </section>
 
   <section class="panel">
-    <div class="step-label">③ 거래내역 — 아래 영수증 썸네일을 표의 영수증 칸에 드래그하세요</div>
+    <div class="step-label">③ 거래내역 — 아래 영수증 사진을 끌어다 영수증 칸에 놓아주세요</div>
     <table class="entries">
       <thead>
         <tr>
@@ -363,18 +411,18 @@
         </tr>
       </thead>
       <tbody id="entries-tbody">
-        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">표를 붙여넣고 파싱 버튼을 누르세요</td></tr>
+        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>
       </tbody>
     </table>
   </section>
 
   <section class="panel">
     <div class="toolbar">
-      <span class="step-label" style="margin: 0;">④ 미할당 영수증</span>
-      <button id="btn-add-files">📄 파일 추가</button>
-      <button id="btn-add-folder">📁 폴더 추가</button>
+      <span class="step-label" style="margin: 0;">④ 영수증 사진</span>
+      <button id="btn-add-files">📄 사진 선택</button>
+      <button id="btn-add-folder">📁 폴더 선택</button>
       <button id="btn-clear-receipts">모두 지우기</button>
-      <button id="btn-auto-match" class="primary">⚡ 자동 매칭 (OCR)</button>
+      <button id="btn-auto-match" class="primary">⚡ 영수증 자동 연결</button>
       <span class="count" id="receipts-count">0개</span>
     </div>
     <div id="receipts-panel" class="thumb-grid"></div>
@@ -383,11 +431,11 @@
   </section>
 
   <section class="panel">
-    <div class="step-label">⑤ PDF 생성</div>
+    <div class="step-label">⑤ PDF 만들기</div>
     <div class="output-row">
       <span style="font-size:13px;">파일명:</span>
       <input type="text" id="filename" value="법인카드_영수증.pdf">
-      <button id="btn-build" class="primary">⑥ PDF 생성 & 다운로드</button>
+      <button id="btn-build" class="primary">⑥ PDF 만들고 다운받기</button>
     </div>
     <div id="status"></div>
     <div id="progress">
@@ -397,6 +445,10 @@
         <span id="progress-eta"></span>
       </div>
     </div>
+    <details class="match-log" id="match-log" hidden>
+      <summary id="match-log-summary">매칭 로그</summary>
+      <div class="log-list" id="log-list"></div>
+    </details>
   </section>
 </div>
 
@@ -610,7 +662,7 @@ async function walkEntry(entry, out) {
 function renderEntries() {
   const tbody = document.getElementById("entries-tbody");
   if (state.entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">표를 붙여넣고 파싱 버튼을 누르세요</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -642,11 +694,11 @@ function renderEntries() {
       drop.addEventListener("contextmenu", ev => {
         ev.preventDefault();
         showContextMenu(ev.clientX, ev.clientY, [
-          { label: "할당 해제", action: () => unassignFromEntry(idx) },
+          { label: "이 영수증 빼기", action: () => unassignFromEntry(idx) },
         ]);
       });
     } else {
-      drop.textContent = "여기에 드롭";
+      drop.textContent = "여기에 영수증 끌어놓기";
     }
     setupDropTarget(drop, idx);
     cell.appendChild(drop);
@@ -694,7 +746,7 @@ function renderReceipts() {
     div.addEventListener("dragend", () => div.classList.remove("dragging"));
     panel.appendChild(div);
   }
-  document.getElementById("receipts-count").textContent = `미할당: ${count}개 / 총 ${state.receipts.size}개`;
+  document.getElementById("receipts-count").textContent = `연결 안 된 영수증 ${count}개 / 전체 ${state.receipts.size}개`;
 }
 
 function escapeHtml(s) {
@@ -790,10 +842,10 @@ async function dataUrlToImageBytes(dataUrl) {
 
 async function buildPdf() {
   if (state.entries.length === 0) {
-    setStatus("먼저 거래내역을 파싱하세요.", "error");
+    setStatus("먼저 거래내역을 불러와주세요.", "error");
     return;
   }
-  setStatus("PDF 생성 중…", "");
+  setStatus("PDF 만드는 중…", "");
   document.getElementById("btn-build").disabled = true;
   try {
     const { PDFDocument, rgb, StandardFonts } = PDFLib;
@@ -876,10 +928,10 @@ async function buildPdf() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     const missing = state.entries.filter(e => !e.receiptId).length;
-    setStatus(`✓ PDF 생성 완료 (${state.entries.length}건${missing ? `, 누락 ${missing}건` : ""})`, "success");
+    setStatus(`✓ PDF 만들기 완료 (${state.entries.length}건${missing ? `, 영수증 누락 ${missing}건` : ""})`, "success");
   } catch (err) {
     console.error(err);
-    setStatus("PDF 생성 실패: " + err.message, "error");
+    setStatus("PDF를 만들지 못했습니다: " + err.message, "error");
   } finally {
     document.getElementById("btn-build").disabled = false;
   }
@@ -896,19 +948,19 @@ function setStatus(msg, kind) {
 // ────────────────────────────────────────────────────────────────
 document.getElementById("btn-parse").addEventListener("click", () => {
   const raw = document.getElementById("paste-box").value;
-  if (!raw.trim()) { setStatus("표를 붙여넣어주세요.", "error"); return; }
+  if (!raw.trim()) { setStatus("먼저 거래내역 표를 붙여넣어주세요.", "error"); return; }
   try {
     const { entries, fmt } = parseTable(raw);
     // Preserve existing receipt assignments by date+amount
     const oldByKey = new Map(state.entries.filter(e => e.receiptId).map(e => [`${e.date}_${e.amount}`, e.receiptId]));
     state.entries = entries.map(e => ({ ...e, receiptId: oldByKey.get(`${e.date}_${e.amount}`) || null }));
     document.getElementById("parse-info").textContent =
-      `포맷 ${fmt} • ${entries.length}건 • 합계 ${entries.reduce((s,e) => s+e.amount, 0).toLocaleString()}원`;
+      `${entries.length}건 불러옴 · 합계 ${entries.reduce((s,e) => s+e.amount, 0).toLocaleString()}원`;
     renderEntries();
     renderReceipts();
     setStatus("");
   } catch (err) {
-    setStatus("파싱 실패: " + err.message, "error");
+    setStatus("거래내역을 불러오지 못했습니다: " + err.message, "error");
   }
 });
 
@@ -938,6 +990,46 @@ document.getElementById("btn-auto-match").addEventListener("click", autoMatch);
 // ────────────────────────────────────────────────────────────────
 // Auto-match via OCR (Tesseract.js)
 // ────────────────────────────────────────────────────────────────
+function renderMatchLog(log) {
+  const wrap = document.getElementById("match-log");
+  const list = document.getElementById("log-list");
+  const summary = document.getElementById("match-log-summary");
+  if (!log || log.length === 0) { wrap.hidden = true; return; }
+  const ok = log.filter(l => l.kind === "ok").length;
+  const suspect = log.filter(l => l.kind === "suspect").length;
+  const fail = log.filter(l => l.kind === "fail").length;
+  summary.innerHTML = `매칭 로그 — <span class="log-tag ok">${ok} 정상</span>${suspect ? `<span class="log-tag suspect">${suspect} 의심</span>` : ""}${fail ? `<span class="log-tag fail">${fail} 실패</span>` : ""}`;
+  list.innerHTML = "";
+  // Show suspect/fail first so user sees problems immediately
+  const order = { suspect: 0, fail: 1, ok: 2 };
+  log.sort((a, b) => order[a.kind] - order[b.kind]);
+  for (const entry of log) {
+    const row = document.createElement("div");
+    row.className = `log-row ${entry.kind}`;
+    const tagText = { ok: "정상", suspect: "의심", fail: "실패" }[entry.kind];
+    let targetHtml = "—";
+    if (entry.target) {
+      targetHtml = `<span class="target">${escapeHtml(entry.target.date)} ${escapeHtml(entry.target.cat)} ${entry.target.amt.toLocaleString()}원</span>`;
+    }
+    const ocrInfo = [
+      entry.ocrDates.length ? `날짜 ${entry.ocrDates.join(", ")}` : "날짜 못읽음",
+      entry.ocrAmounts.length ? `금액 ${entry.ocrAmounts.slice(0, 5).map(n => n.toLocaleString()).join(", ")}` : "금액 못읽음",
+    ].join(" · ");
+    row.innerHTML = `
+      <div>
+        <div class="name">${escapeHtml(entry.receipt)} <span class="log-tag ${entry.kind}">${tagText}</span></div>
+        <div class="detail">${escapeHtml(entry.reason)}</div>
+        <div class="detail">↳ 인식된 정보: ${escapeHtml(ocrInfo)}</div>
+      </div>
+      <div>${targetHtml}</div>
+    `;
+    list.appendChild(row);
+  }
+  wrap.hidden = false;
+  // Auto-open if there are suspects/failures
+  wrap.open = (suspect + fail) > 0;
+}
+
 async function loadTesseract() {
   if (window.Tesseract) return;
   await new Promise((res, rej) => {
@@ -968,14 +1060,14 @@ function setProgressEta(startedAt, current, total) {
 }
 
 async function autoMatch() {
-  if (state.entries.length === 0) { setStatus("먼저 거래내역을 파싱하세요.", "error"); return; }
+  if (state.entries.length === 0) { setStatus("먼저 거래내역을 불러와주세요.", "error"); return; }
   const unassigned = Array.from(state.receipts.values()).filter(r => !state.entries.some(e => e.receiptId === r.id));
-  if (unassigned.length === 0) { setStatus("매칭할 영수증이 없습니다.", "error"); return; }
+  if (unassigned.length === 0) { setStatus("연결할 영수증이 없습니다.", "error"); return; }
 
   const btn = document.getElementById("btn-auto-match");
   btn.disabled = true;
-  setStatus("OCR 엔진 로딩 중… (최초 1회 ~10초)", "");
-  setProgress(true, 0, unassigned.length, "OCR 엔진 준비 중…");
+  setStatus("글자 인식 엔진 준비 중… (최초 1회만 ~10초)", "");
+  setProgress(true, 0, unassigned.length, "글자 인식 엔진 준비 중…");
   try {
     await loadTesseract();
     const worker = await Tesseract.createWorker(["kor", "eng"], 1, {
@@ -994,12 +1086,13 @@ async function autoMatch() {
 
     let matched = 0;
     const startedAt = performance.now();
+    const matchLog = [];
     for (let i = 0; i < unassigned.length; i++) {
       const r = unassigned[i];
       state.processingReceiptId = r.id;
       renderReceipts();
-      setStatus(`OCR 중: ${i + 1}/${unassigned.length} — ${r.name}`, "");
-      setProgress(true, i, unassigned.length, `OCR 중 (${i + 1}/${unassigned.length}): ${r.name}`);
+      setStatus(`영수증 글자 인식 중: ${i + 1}/${unassigned.length} — ${r.name}`, "");
+      setProgress(true, i, unassigned.length, `영수증 인식 중 (${i + 1}/${unassigned.length}): ${r.name}`);
       setProgressEta(startedAt, i, unassigned.length);
       try {
         const { data } = await worker.recognize(r.dataUrl);
@@ -1051,12 +1144,43 @@ async function autoMatch() {
         if (assignedIdx >= 0) {
           state.entries[assignedIdx].receiptId = r.id;
           matched++;
+          const e2 = state.entries[assignedIdx];
+          const dateMatched = dates.has(e2.date.slice(5));
+          matchLog.push({
+            kind: dateMatched ? "ok" : "suspect",
+            receipt: r.name,
+            ocrAmounts: candidates,
+            ocrDates: [...dates],
+            target: { date: e2.date.slice(5), cat: e2.category, amt: e2.amount, vendor: e2.vendor },
+            reason: dateMatched
+              ? `금액(${e2.amount.toLocaleString()}원)+날짜 일치`
+              : `금액만 일치 (영수증에서 ${e2.date.slice(5)} 날짜 못 찾음 — 잘못 매칭 가능성 있음)`,
+          });
           // Update UI immediately so user sees progress
           renderEntries();
           renderReceipts();
+        } else {
+          matchLog.push({
+            kind: "fail",
+            receipt: r.name,
+            ocrAmounts: candidates,
+            ocrDates: [...dates],
+            target: null,
+            reason: candidates.length === 0
+              ? "영수증에서 금액을 못 읽었습니다"
+              : `읽은 금액(${candidates.slice(0, 4).map(n => n.toLocaleString()).join(", ")}${candidates.length > 4 ? ", …" : ""}) 중 표 항목과 일치 없음`,
+          });
         }
       } catch (e) {
         console.warn("OCR failed for", r.name, e);
+        matchLog.push({
+          kind: "fail",
+          receipt: r.name,
+          ocrAmounts: [],
+          ocrDates: [],
+          target: null,
+          reason: "글자 인식 자체가 실패했습니다 (사진이 너무 어둡거나 흐림)",
+        });
       }
     }
     await worker.terminate();
@@ -1066,11 +1190,16 @@ async function autoMatch() {
     setProgress(true, unassigned.length, unassigned.length, "완료");
     document.getElementById("progress-eta").textContent = "";
     const remaining = unassigned.length - matched;
-    setStatus(`✓ 자동 매칭: ${matched}건 성공${remaining ? `, ${remaining}건 미매칭(수동 드래그 필요)` : ""}`, "success");
+    const suspectCount = matchLog.filter(l => l.kind === "suspect").length;
+    let msg = `✓ 자동 연결 완료: ${matched}건 성공`;
+    if (suspectCount) msg += `, 의심스러운 매칭 ${suspectCount}건 (로그 확인)`;
+    if (remaining) msg += `, ${remaining}건 못 찾음(직접 드래그 필요)`;
+    setStatus(msg, "success");
+    renderMatchLog(matchLog);
     setTimeout(() => setProgress(false), 2000);
   } catch (err) {
     console.error(err);
-    setStatus("자동 매칭 실패: " + err.message, "error");
+    setStatus("영수증 자동 연결을 실패했습니다: " + err.message, "error");
     setProgress(false);
     state.processingReceiptId = null;
     renderReceipts();
