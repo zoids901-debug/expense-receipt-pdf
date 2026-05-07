@@ -238,13 +238,18 @@
   .output-row { display: flex; gap: 8px; align-items: center; }
   .output-row input { flex: 1; }
   #status {
-    margin-top: 4px;
-    font-size: 12.5px;
+    margin-top: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
     color: var(--muted);
-    min-height: 1.4em;
+    min-height: 1.6em;
+    border-radius: 6px;
+    background: #f4f6f9;
+    border: 1px solid var(--border);
   }
-  #status.error { color: var(--danger); }
-  #status.success { color: var(--good); }
+  #status:empty { display: none; }
+  #status.error { color: var(--danger); background: #fef0f0; border-color: #fcc; }
+  #status.success { color: var(--good); background: #f0fbf3; border-color: #bce5c4; }
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -972,6 +977,9 @@ async function autoMatch() {
         if (assignedIdx >= 0) {
           state.entries[assignedIdx].receiptId = r.id;
           matched++;
+          // Update UI immediately so user sees progress
+          renderEntries();
+          renderReceipts();
         }
       } catch (e) {
         console.warn("OCR failed for", r.name, e);
