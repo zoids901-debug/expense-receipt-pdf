@@ -916,6 +916,8 @@ async function autoMatch() {
       byAmount.get(e.amount).push(idx);
     });
 
+    const TOTAL_RE = /(합\s*계|결\s*제\s*금?\s*액|승\s*인\s*금?\s*액|총\s*결\s*제|판\s*매\s*금?\s*액|매\s*입\s*금?\s*액|총\s*액)/;
+
     let matched = 0;
     for (let i = 0; i < unassigned.length; i++) {
       const r = unassigned[i];
@@ -927,20 +929,45 @@ async function autoMatch() {
         const text = rawText
           .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
           .replace(/(\d)\s+(\d{3})(?!\d)/g, "$1,$2");
-        // Extract candidate amounts
-        const candidates = new Set();
-        for (const m of text.matchAll(/(\d{1,3}(?:,\d{3})+|\d{4,7})/g)) {
-          const n = parseInt(m[1].replace(/,/g, ""), 10);
-          if (n >= 1000 && n <= 5000000) candidates.add(n);
+
+        // Extract dates (MM-DD format from any year-month-day pattern)
+        const dates = new Set();
+        for (const m of text.matchAll(/(?:20\d{2}|\d{2})[-./](\d{1,2})[-./](\d{1,2})/g)) {
+          const month = parseInt(m[1], 10);
+          const day = parseInt(m[2], 10);
+          if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+            dates.add(`${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`);
+          }
         }
-        // Try matching each candidate against unassigned entries
+
+        // Extract amounts: priority for 합계/결제금액 lines, then others
+        const priorityAmounts = [];
+        const otherAmounts = [];
+        for (const line of text.split("\n")) {
+          const isTotal = TOTAL_RE.test(line);
+          for (const m of line.matchAll(/\d{1,3}(?:,\d{3})+|\d{4,7}/g)) {
+            const n = parseInt(m[0].replace(/,/g, ""), 10);
+            if (n >= 1000 && n <= 5000000) {
+              (isTotal ? priorityAmounts : otherAmounts).push(n);
+            }
+          }
+        }
+        // Dedupe preserving order
+        const candidates = [...new Set([...priorityAmounts, ...otherAmounts])];
+
+        // Match: prefer entries with same date (when multiple entries share an amount)
         let assignedIdx = -1;
         for (const amt of candidates) {
           const list = byAmount.get(amt);
-          if (list && list.length > 0) {
-            assignedIdx = list.shift();
-            break;
+          if (!list || list.length === 0) continue;
+          let bestPos = 0;
+          for (let p = 0; p < list.length; p++) {
+            const e = state.entries[list[p]];
+            const dateKey = e.date.slice(5); // "04-23"
+            if (dates.has(dateKey)) { bestPos = p; break; }
           }
+          assignedIdx = list.splice(bestPos, 1)[0];
+          break;
         }
         if (assignedIdx >= 0) {
           state.entries[assignedIdx].receiptId = r.id;
