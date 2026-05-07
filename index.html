@@ -1074,23 +1074,42 @@ async function autoMatch() {
       logger: () => {},
     });
 
-    // Index unassigned entries by amount → list of indices
-    const byAmount = new Map();
-    state.entries.forEach((e, idx) => {
-      if (e.receiptId) return;
-      if (!byAmount.has(e.amount)) byAmount.set(e.amount, []);
-      byAmount.get(e.amount).push(idx);
-    });
-
     // Total keyword regex — covers OCR errors (함계, 합 게 etc) and many synonyms
     const TOTAL_RE = /(합\s*[계겨게궤그]|함\s*[계겨게궤]|결\s*제\s*[금그]?\s*[액얙]|승\s*인\s*[금그]?\s*[액얙]|총\s*결\s*제|총\s*[액얙]|판\s*매\s*[금그]?\s*[액얙]|매\s*[출솔임]\s*[금그]?\s*[액얙]|받\s*은\s*[금그]?\s*[액얙]|total|amount\s*due)/i;
     const DATE_PATTERNS = [
-      /(?:20\d{2}|\d{2})[-./년](\d{1,2})[-./월](\d{1,2})/g,  // 2026-04-23, 26.04.23, 2026년04월23
-      /(?:20\d{2}|\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/g,  // 2026년 4월 23일
-      /(?<![\d-])(\d{1,2})[-./](\d{1,2})(?![-./\d])/g,  // 4/23 alone
+      /(?:20\d{2}|\d{2})[-./년](\d{1,2})[-./월](\d{1,2})/g,
+      /(?:20\d{2}|\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/g,
+      /(?<![\d-])(\d{1,2})[-./](\d{1,2})(?![-./\d])/g,
     ];
 
-    let matched = 0;
+    // Build vendor/memo tokens for each entry (significant Korean words ≥2 chars)
+    const STOPWORDS = new Set([
+      "주식회사", "주", "유한회사", "(주)", "(유)", "점", "본점", "지점", "강남점", "강북점",
+      "점심", "식대", "구입", "비용", "샘플", "샘플비", "개발", "테스트", "용",
+    ]);
+    function tokenize(s) {
+      if (!s) return [];
+      // Split on parens/spaces/special chars; keep tokens of length ≥2 (Korean) or ≥3 (Latin)
+      const raw = s.replace(/[()（）\[\]{}]/g, " ").split(/[\s,，·•/-]+/).filter(Boolean);
+      const out = new Set();
+      for (let t of raw) {
+        t = t.replace(/[^가-힣a-zA-Z0-9]/g, "");
+        if (!t) continue;
+        if (STOPWORDS.has(t)) continue;
+        // Strip trailing common suffixes (점, 본점)
+        const stripped = t.replace(/(본점|지점)$/, "").replace(/[0-9]+호점?$/, "");
+        if (stripped.length >= 2 && !STOPWORDS.has(stripped)) out.add(stripped);
+        if (t.length >= 2 && !STOPWORDS.has(t)) out.add(t);
+      }
+      return [...out];
+    }
+    const entryTokens = state.entries.map(e => ({
+      vendor: tokenize(e.vendor),
+      memo: tokenize(e.memo),
+    }));
+
+    // Phase 1: OCR all receipts and extract features (amounts, dates, raw text)
+    const features = []; // [{receipt, ocrText, totalAmounts, tailAmounts, lineItemAmounts, allAmounts, dates}]
     const startedAt = performance.now();
     const matchLog = [];
     for (let i = 0; i < unassigned.length; i++) {
@@ -1138,131 +1157,100 @@ async function autoMatch() {
           }
         });
 
-        const candidates = [...new Set([...totalAmounts, ...tailAmounts, ...lineItemAmounts])];
-
-        // Try matching with priority levels
-        let assignedIdx = -1;
-        let confidence = "low";
-
-        // Helper: try matching an amount, preferring entries whose date is in OCR'd dates
-        const tryMatch = (amt) => {
-          const list = byAmount.get(amt);
-          if (!list || list.length === 0) return -1;
-          let bestPos = 0;
-          let datedFound = false;
-          for (let p = 0; p < list.length; p++) {
-            const e = state.entries[list[p]];
-            if (dates.has(e.date.slice(5))) { bestPos = p; datedFound = true; break; }
-          }
-          const idx = list.splice(bestPos, 1)[0];
-          return { idx, datedFound };
-        };
-
-        // Priority 1: 합계 line + date match
-        for (const amt of totalAmounts) {
-          const result = tryMatch(amt);
-          if (result !== -1) {
-            assignedIdx = result.idx;
-            confidence = result.datedFound ? "high" : "medium-total";
-            break;
-          }
-        }
-
-        // Priority 2: any amount but with date matched
-        if (assignedIdx < 0 && dates.size > 0) {
-          for (const amt of candidates) {
-            const list = byAmount.get(amt);
-            if (!list || list.length === 0) continue;
-            const datedPos = list.findIndex(idx => dates.has(state.entries[idx].date.slice(5)));
-            if (datedPos >= 0) {
-              assignedIdx = list.splice(datedPos, 1)[0];
-              confidence = "high-date";
-              break;
-            }
-          }
-        }
-
-        // Priority 3: tail amount (likely total even without keyword)
-        if (assignedIdx < 0) {
-          for (const amt of tailAmounts) {
-            const result = tryMatch(amt);
-            if (result !== -1) {
-              assignedIdx = result.idx;
-              confidence = "medium-tail";
-              break;
-            }
-          }
-        }
-
-        // Priority 4: line-item amount — only match if uniquely identifies an entry
-        if (assignedIdx < 0) {
-          for (const amt of lineItemAmounts) {
-            const list = byAmount.get(amt);
-            if (!list || list.length === 0) continue;
-            // Conservative: only match if exactly one entry candidate (no ambiguity)
-            // AND line-item amount matches the entry's date OR no date info available
-            if (list.length === 1) {
-              const idx = list.shift();
-              assignedIdx = idx;
-              confidence = "low-uniqueLineItem";
-              break;
-            }
-          }
-        }
-        if (assignedIdx >= 0) {
-          state.entries[assignedIdx].receiptId = r.id;
-          matched++;
-          const e2 = state.entries[assignedIdx];
-          const dateMatched = dates.has(e2.date.slice(5));
-          const kind = (confidence === "high" || confidence === "high-date") ? "ok"
-                     : (confidence === "low-uniqueLineItem") ? "suspect"
-                     : (dateMatched ? "ok" : "suspect");
-          const reasonMap = {
-            "high": `합계라인의 금액(${e2.amount.toLocaleString()}원)이 표 항목과 일치하고, 날짜도 일치 → 확실`,
-            "medium-total": `합계라인의 금액(${e2.amount.toLocaleString()}원)이 일치 (날짜 못 읽음)`,
-            "high-date": `금액(${e2.amount.toLocaleString()}원) + 날짜(${e2.date.slice(5)}) 일치`,
-            "medium-tail": `영수증 하단의 금액(${e2.amount.toLocaleString()}원)이 일치 — 합계로 추정`,
-            "low-uniqueLineItem": `라인 항목 금액(${e2.amount.toLocaleString()}원)이 표에 1건뿐이라 매칭 — 잘못 매칭 가능성 있음`,
-          };
-          matchLog.push({
-            kind,
-            receipt: r.name,
-            ocrAmounts: candidates,
-            ocrDates: [...dates],
-            target: { date: e2.date.slice(5), cat: e2.category, amt: e2.amount, vendor: e2.vendor },
-            reason: reasonMap[confidence] || `금액 일치 (${confidence})`,
-          });
-          // Update UI immediately so user sees progress
-          renderEntries();
-          renderReceipts();
-        } else {
-          matchLog.push({
-            kind: "fail",
-            receipt: r.name,
-            ocrAmounts: candidates,
-            ocrDates: [...dates],
-            target: null,
-            reason: candidates.length === 0
-              ? "영수증에서 금액을 못 읽었습니다"
-              : `읽은 금액(${candidates.slice(0, 4).map(n => n.toLocaleString()).join(", ")}${candidates.length > 4 ? ", …" : ""}) 중 표 항목과 일치 없음`,
-          });
-        }
+        features.push({
+          receipt: r,
+          ocrText: text,
+          totalAmounts: new Set(totalAmounts),
+          tailAmounts: new Set(tailAmounts),
+          lineItemAmounts: new Set(lineItemAmounts),
+          allAmounts: new Set([...totalAmounts, ...tailAmounts, ...lineItemAmounts]),
+          dates,
+        });
       } catch (e) {
         console.warn("OCR failed for", r.name, e);
-        matchLog.push({
-          kind: "fail",
-          receipt: r.name,
-          ocrAmounts: [],
-          ocrDates: [],
-          target: null,
-          reason: "글자 인식 자체가 실패했습니다 (사진이 너무 어둡거나 흐림)",
+        features.push({
+          receipt: r, ocrText: "", error: true,
+          totalAmounts: new Set(), tailAmounts: new Set(), lineItemAmounts: new Set(),
+          allAmounts: new Set(), dates: new Set(),
         });
       }
     }
     await worker.terminate();
     state.processingReceiptId = null;
-    renderEntries();
     renderReceipts();
+
+    // Phase 2: score every (receipt, entry) pair, sort by score, greedy assign
+    setStatus("매칭 점수 계산 중…", "");
+    const unassignedEntryIndices = state.entries.map((e, idx) => e.receiptId ? -1 : idx).filter(i => i >= 0);
+
+    function scorePair(feat, entryIdx) {
+      const e = state.entries[entryIdx];
+      const tokens = entryTokens[entryIdx];
+      let score = 0;
+      const reasons = [];
+      if (feat.totalAmounts.has(e.amount))      { score += 100; reasons.push(`합계금액 ${e.amount.toLocaleString()}원 일치 +100`); }
+      else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단금액 ${e.amount.toLocaleString()}원 일치 +60`); }
+      else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인항목금액 ${e.amount.toLocaleString()}원 일치 +25`); }
+      if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치 +80`); }
+      const vMatched = tokens.vendor.filter(t => feat.ocrText.includes(t));
+      if (vMatched.length)                      { score += 60; reasons.push(`거래처 [${vMatched.join(",")}] 발견 +60`); }
+      const mMatched = tokens.memo.filter(t => feat.ocrText.includes(t) && !vMatched.includes(t));
+      if (mMatched.length)                      { const b = Math.min(20, mMatched.length * 10); score += b; reasons.push(`적요 [${mMatched.join(",")}] 발견 +${b}`); }
+      return { score, reasons };
+    }
+
+    const pairs = [];
+    for (let fi = 0; fi < features.length; fi++) {
+      for (const ei of unassignedEntryIndices) {
+        const r = scorePair(features[fi], ei);
+        if (r.score > 0) pairs.push({ fi, ei, score: r.score, reasons: r.reasons });
+      }
+    }
+    pairs.sort((a, b) => b.score - a.score);
+
+    const usedF = new Set(), usedE = new Set();
+    const MIN_SCORE = 80;
+    let matched = 0;
+    for (const p of pairs) {
+      if (usedF.has(p.fi) || usedE.has(p.ei)) continue;
+      if (p.score < MIN_SCORE) break;
+      usedF.add(p.fi); usedE.add(p.ei);
+      const feat = features[p.fi];
+      const entry = state.entries[p.ei];
+      entry.receiptId = feat.receipt.id;
+      matched++;
+      const kind = p.score >= 200 ? "ok" : p.score >= 140 ? "ok" : "suspect";
+      matchLog.push({
+        kind,
+        receipt: feat.receipt.name,
+        ocrAmounts: [...feat.allAmounts],
+        ocrDates: [...feat.dates],
+        target: { date: entry.date.slice(5), cat: entry.category, amt: entry.amount, vendor: entry.vendor },
+        reason: `점수 ${p.score}점 — ${p.reasons.join(" · ")}`,
+      });
+      renderEntries();
+      renderReceipts();
+    }
+
+    // Log unmatched receipts
+    for (let fi = 0; fi < features.length; fi++) {
+      if (usedF.has(fi)) continue;
+      const feat = features[fi];
+      const bestPair = pairs.find(p => p.fi === fi);
+      matchLog.push({
+        kind: "fail",
+        receipt: feat.receipt.name,
+        ocrAmounts: [...feat.allAmounts],
+        ocrDates: [...feat.dates],
+        target: null,
+        reason: feat.error
+          ? "글자 인식 실패 (사진이 너무 어둡거나 흐림)"
+          : bestPair
+            ? `최고 점수 ${bestPair.score}점이 임계값(${MIN_SCORE}점) 미달`
+            : "표 항목과 일치하는 신호 없음",
+      });
+    }
+
     setProgress(true, unassigned.length, unassigned.length, "완료");
     document.getElementById("progress-eta").textContent = "";
     const remaining = unassigned.length - matched;
