@@ -1119,6 +1119,19 @@ async function autoMatch() {
       // For substring matching: strip whitespace, common punctuation, OCR-noise chars
       return s.replace(/\s+/g, "").replace(/[#*_+=,.;:|`~^"'()<>{}\[\]]/g, "");
     }
+    // Asymmetric bigram coverage: what fraction of token bigrams appear in OCR text?
+    // Used for fuzzy vendor matching (e.g. "대치6점" vs OCR "대치6호점")
+    function fuzzyContains(token, ocrNorm) {
+      if (token.length < 4) return 0; // too short → false positive risk
+      const bigrams = new Set();
+      for (let i = 0; i < token.length - 1; i++) bigrams.add(token.slice(i, i + 2));
+      if (bigrams.size === 0) return 0;
+      const ocrBigrams = new Set();
+      for (let i = 0; i < ocrNorm.length - 1; i++) ocrBigrams.add(ocrNorm.slice(i, i + 2));
+      let hits = 0;
+      for (const g of bigrams) if (ocrBigrams.has(g)) hits++;
+      return hits / bigrams.size;
+    }
     const entryTokens = state.entries.map(e => ({
       vendor: tokenize(e.vendor),
       memo: tokenize(e.memo),
@@ -1210,7 +1223,21 @@ async function autoMatch() {
       else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인항목금액 ${e.amount.toLocaleString()}원 일치 +25`); }
       if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치 +80`); }
       const vMatched = tokens.vendor.filter(t => feat.ocrNorm.includes(t));
-      if (vMatched.length)                      { score += 60; reasons.push(`거래처 [${vMatched.join(",")}] 발견 +60`); }
+      if (vMatched.length) {
+        score += 60; reasons.push(`거래처 [${vMatched.join(",")}] 발견 +60`);
+      } else {
+        // Fuzzy: bigram coverage ≥ 85% on tokens of length ≥ 4
+        const fuzzyHits = [];
+        for (const t of tokens.vendor) {
+          const sim = fuzzyContains(t, feat.ocrNorm);
+          if (sim >= 0.85) fuzzyHits.push({ t, sim });
+        }
+        if (fuzzyHits.length) {
+          score += 30;
+          const list = fuzzyHits.map(f => `${f.t}(${Math.round(f.sim * 100)}%)`).join(",");
+          reasons.push(`거래처 유사 [${list}] 발견 +30`);
+        }
+      }
       const mMatched = tokens.memo.filter(t => feat.ocrNorm.includes(t) && !vMatched.includes(t));
       if (mMatched.length)                      { const b = Math.min(20, mMatched.length * 10); score += b; reasons.push(`적요 [${mMatched.join(",")}] 발견 +${b}`); }
       return { score, reasons };
