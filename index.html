@@ -341,6 +341,55 @@
   .log-tag.ok { background: #e7f6ec; color: var(--good); }
   .log-tag.fail { background: #fdecec; color: var(--danger); }
   .log-tag.suspect { background: #fff4d6; color: #b07300; }
+  /* Lightbox / image preview overlay */
+  #lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    padding: 20px;
+  }
+  #lightbox.active { display: flex; }
+  #lightbox img {
+    max-width: 95vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+  }
+  #lightbox .lightbox-caption {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-size: 13px;
+    background: rgba(0,0,0,0.6);
+    padding: 6px 14px;
+    border-radius: 14px;
+  }
+  #lightbox .lightbox-close {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    color: white;
+    font-size: 28px;
+    cursor: pointer;
+    background: rgba(255,255,255,0.15);
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  #lightbox .lightbox-close:hover { background: rgba(255,255,255,0.3); }
+  .thumb img, .receipt-cell.has-image img { cursor: zoom-in; }
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -455,6 +504,12 @@
 <div class="footer">
   데이터는 브라우저에서만 처리되며 외부로 전송되지 않습니다 ·
   <a href="https://github.com/" target="_blank">GitHub</a>
+</div>
+
+<div id="lightbox">
+  <div class="lightbox-close" id="lightbox-close">×</div>
+  <img id="lightbox-img" alt="">
+  <div class="lightbox-caption" id="lightbox-caption"></div>
 </div>
 
 <!-- Libraries -->
@@ -686,6 +741,10 @@ function renderEntries() {
       drop.classList.add("has-image");
       drop.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
       drop.draggable = true;
+      drop.querySelector("img").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        showLightbox(r.dataUrl, r.name);
+      });
       drop.addEventListener("dragstart", ev => {
         ev.dataTransfer.setData("application/x-receipt-id", r.id);
         ev.dataTransfer.setData("application/x-from-entry", String(idx));
@@ -737,6 +796,10 @@ function renderReceipts() {
     div.draggable = true;
     if (r.id === state.processingReceiptId) div.classList.add("ocr-processing");
     div.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
+    div.querySelector("img").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      showLightbox(r.dataUrl, r.name);
+    });
     div.addEventListener("dragstart", ev => {
       ev.dataTransfer.setData("application/x-receipt-id", r.id);
       ev.dataTransfer.setData("application/x-from-entry", "");
@@ -748,6 +811,23 @@ function renderReceipts() {
   }
   document.getElementById("receipts-count").textContent = `연결 안 된 영수증 ${count}개 / 전체 ${state.receipts.size}개`;
 }
+
+function showLightbox(dataUrl, caption) {
+  const lb = document.getElementById("lightbox");
+  document.getElementById("lightbox-img").src = dataUrl;
+  document.getElementById("lightbox-caption").textContent = caption || "";
+  lb.classList.add("active");
+}
+function hideLightbox() {
+  document.getElementById("lightbox").classList.remove("active");
+}
+document.getElementById("lightbox").addEventListener("click", (e) => {
+  if (e.target.id === "lightbox" || e.target.id === "lightbox-close") hideLightbox();
+});
+document.getElementById("lightbox-close").addEventListener("click", hideLightbox);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideLightbox();
+});
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
