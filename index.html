@@ -1249,11 +1249,14 @@ async function autoMatch() {
 
     // Total keyword regex — covers OCR errors (함계, 합 게 etc) and many synonyms
     const TOTAL_RE = /(합\s*[계겨게궤그]|함\s*[계겨게궤]|결\s*제\s*[금그]?\s*[액얙]|승\s*인\s*[금그]?\s*[액얙]|총\s*결\s*제|총\s*[액얙]|판\s*매\s*[금그]?\s*[액얙]|매\s*[출솔임]\s*[금그]?\s*[액얙]|받\s*은\s*[금그]?\s*[액얙]|total|amount\s*due)/i;
-    const DATE_PATTERNS = [
-      /(?:20\d{2}|\d{2})[-./년](\d{1,2})[-./월](\d{1,2})/g,
-      /(?:20\d{2}|\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/g,
-      /(?<![\d-])(\d{1,2})[-./](\d{1,2})(?![-./\d])/g,
+    // Only trust dates that include a year — short MM-DD patterns are too prone
+    // to false positives (POS codes, phone numbers, item counts).
+    const DATE_PATTERNS_STRICT = [
+      /(?:20\d{2}|2\d)[-./년](\d{1,2})[-./월](\d{1,2})/g,
+      /(?:20\d{2}|2\d)\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/g,
     ];
+    // Bare MM-DD only allowed near these keywords on the same line
+    const DATE_KEYWORD_RE = /(판\s*매|거\s*래|결\s*제|일\s*자|매\s*출|승\s*인|구\s*매)/;
 
     // Build vendor/memo tokens for each entry (significant Korean words ≥2 chars)
     const STOPWORDS = new Set([
@@ -1344,15 +1347,23 @@ async function autoMatch() {
           .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
           .replace(/(\d)\s+(\d{3})(?!\d)/g, "$1,$2");
 
-        // Extract dates (MM-DD format from various patterns)
+        // Extract dates (MM-DD format) — strict: require 4-digit year OR keyword-adjacent
         const dates = new Set();
-        for (const re of DATE_PATTERNS) {
-          for (const m of text.matchAll(re)) {
-            const month = parseInt(m[1], 10);
-            const day = parseInt(m[2], 10);
-            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-              dates.add(`${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`);
-            }
+        const addDate = (m, d) => {
+          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            dates.add(`${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+          }
+        };
+        for (const re of DATE_PATTERNS_STRICT) {
+          for (const m of text.matchAll(re)) addDate(parseInt(m[1], 10), parseInt(m[2], 10));
+        }
+        // Bare MM-DD: only if same line contains a date keyword AND not preceded by phone-like prefix
+        for (const line of text.split("\n")) {
+          if (!DATE_KEYWORD_RE.test(line)) continue;
+          for (const m of line.matchAll(/(?<!\d)(?<![-./])(\d{1,2})[-./](\d{1,2})(?!\d)(?![-./])/g)) {
+            // Skip if the line also looks like a phone (starts 02-/010-/070-/1577-/1588-)
+            if (/(?:^|\D)(02|0[1-9]\d|1[0-9]{3})[-.]\d/.test(line) && !/[년월일판매거래결제]/.test(line)) continue;
+            addDate(parseInt(m[1], 10), parseInt(m[2], 10));
           }
         }
 
