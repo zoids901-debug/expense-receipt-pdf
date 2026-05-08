@@ -341,54 +341,64 @@
   .log-tag.ok { background: #e7f6ec; color: var(--good); }
   .log-tag.fail { background: #fdecec; color: var(--danger); }
   .log-tag.suspect { background: #fff4d6; color: #b07300; }
-  /* Lightbox / image preview overlay */
+  /* Popup image preview (modal) */
   #lightbox {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.88);
+    background: rgba(0,0,0,0.4);
     z-index: 2000;
     align-items: center;
     justify-content: center;
-    cursor: zoom-out;
     padding: 20px;
   }
   #lightbox.active { display: flex; }
-  #lightbox img {
-    max-width: 95vw;
-    max-height: 92vh;
+  .lightbox-frame {
+    background: white;
+    border-radius: 10px;
+    padding: 14px 14px 10px;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.35);
+    max-width: 70vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+  }
+  .lightbox-frame img {
+    max-width: 65vw;
+    max-height: 72vh;
     object-fit: contain;
     border-radius: 4px;
-    box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+    background: #f4f5f7;
   }
-  #lightbox .lightbox-caption {
-    position: absolute;
-    bottom: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: white;
-    font-size: 13px;
-    background: rgba(0,0,0,0.6);
-    padding: 6px 14px;
-    border-radius: 14px;
+  .lightbox-caption {
+    font-size: 12.5px;
+    color: #444;
+    word-break: break-all;
+    text-align: center;
+    max-width: 60vw;
   }
-  #lightbox .lightbox-close {
+  .lightbox-close {
     position: absolute;
-    top: 14px;
-    right: 18px;
-    color: white;
-    font-size: 28px;
+    top: -14px;
+    right: -14px;
+    background: white;
+    color: #333;
+    font-size: 22px;
     cursor: pointer;
-    background: rgba(255,255,255,0.15);
     border-radius: 50%;
-    width: 38px;
-    height: 38px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
     line-height: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    border: 1px solid var(--border);
   }
-  #lightbox .lightbox-close:hover { background: rgba(255,255,255,0.3); }
+  .lightbox-close:hover { background: #f3f5f9; }
   .thumb img, .receipt-cell.has-image img { cursor: zoom-in; }
   .badge {
     display: inline-block;
@@ -507,9 +517,11 @@
 </div>
 
 <div id="lightbox">
-  <div class="lightbox-close" id="lightbox-close">×</div>
-  <img id="lightbox-img" alt="">
-  <div class="lightbox-caption" id="lightbox-caption"></div>
+  <div class="lightbox-frame">
+    <div class="lightbox-close" id="lightbox-close">×</div>
+    <img id="lightbox-img" alt="">
+    <div class="lightbox-caption" id="lightbox-caption"></div>
+  </div>
 </div>
 
 <!-- Libraries -->
