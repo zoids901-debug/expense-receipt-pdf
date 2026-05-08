@@ -1322,10 +1322,23 @@ async function autoMatch() {
       setProgress(true, i, unassigned.length, `영수증 인식 중 (${i + 1}/${unassigned.length}): ${r.name}`);
       setProgressEta(startedAt, i, unassigned.length);
       try {
-        // Preprocess: remove colored handwriting, boost contrast, binarize
-        const cleanedDataUrl = await preprocessForOcr(r.dataUrl).catch(() => r.dataUrl);
-        const { data } = await worker.recognize(cleanedDataUrl);
-        const rawText = data.text || "";
+        // Pass 1: original image
+        let { data } = await worker.recognize(r.dataUrl);
+        let rawText = data.text || "";
+
+        // Quick quality check: enough numeric signal + a date?
+        const ampCount = (rawText.match(/\d{1,3}(?:,\d{3})+|\d{4,7}/g) || []).length;
+        const hasDate = /\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/.test(rawText);
+
+        // If first pass looks weak, run a second pass on preprocessed image
+        // and combine results (union)
+        if (ampCount < 3 || !hasDate) {
+          try {
+            const cleaned = await preprocessForOcr(r.dataUrl);
+            const second = await worker.recognize(cleaned);
+            rawText = rawText + "\n----PREPROC----\n" + (second.data.text || "");
+          } catch (_) { /* preprocessing failed, keep original */ }
+        }
         // Normalize OCR artifacts: "17. 000" / "12, 100" / "17 000" → "17,000"
         const text = rawText
           .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
