@@ -1087,21 +1087,37 @@ async function autoMatch() {
       "주식회사", "주", "유한회사", "(주)", "(유)", "점", "본점", "지점", "강남점", "강북점",
       "점심", "식대", "구입", "비용", "샘플", "샘플비", "개발", "테스트", "용",
     ]);
+    function stripVendorSuffixes(s) {
+      // Strip company prefixes
+      let v = s.replace(/\(주\)|\(유\)|주식회사|유한회사/g, "").trim();
+      // Keep stripping known suffixes one by one
+      let prev;
+      do {
+        prev = v;
+        v = v.replace(/(\d+호점|\d+호|\d+점|호점|본점|지점|점)$/, "");
+      } while (v !== prev);
+      return v;
+    }
     function tokenize(s) {
       if (!s) return [];
-      // Split on parens/spaces/special chars; keep tokens of length ≥2 (Korean) or ≥3 (Latin)
-      const raw = s.replace(/[()（）\[\]{}]/g, " ").split(/[\s,，·•/-]+/).filter(Boolean);
+      const cleaned = s.replace(/\(주\)|\(유\)|주식회사|유한회사/g, "").trim();
       const out = new Set();
-      for (let t of raw) {
-        t = t.replace(/[^가-힣a-zA-Z0-9]/g, "");
-        if (!t) continue;
-        if (STOPWORDS.has(t)) continue;
-        // Strip trailing common suffixes (점, 본점)
-        const stripped = t.replace(/(본점|지점)$/, "").replace(/[0-9]+호점?$/, "");
+      const addToken = (t) => {
+        const c = t.replace(/[^가-힣a-zA-Z0-9]/g, "");
+        if (c.length < 2) return;
+        if (STOPWORDS.has(c)) return;
+        out.add(c);
+        // Also add version with suffixes stripped
+        const stripped = stripVendorSuffixes(c).replace(/[^가-힣a-zA-Z0-9]/g, "");
         if (stripped.length >= 2 && !STOPWORDS.has(stripped)) out.add(stripped);
-        if (t.length >= 2 && !STOPWORDS.has(t)) out.add(t);
-      }
+      };
+      addToken(cleaned);
+      for (const w of cleaned.split(/[\s,，·•/-]+/)) addToken(w);
       return [...out];
+    }
+    function normalizeOcr(s) {
+      // For substring matching: strip whitespace, common punctuation, OCR-noise chars
+      return s.replace(/\s+/g, "").replace(/[#*_+=,.;:|`~^"'()<>{}\[\]]/g, "");
     }
     const entryTokens = state.entries.map(e => ({
       vendor: tokenize(e.vendor),
@@ -1160,6 +1176,7 @@ async function autoMatch() {
         features.push({
           receipt: r,
           ocrText: text,
+          ocrNorm: normalizeOcr(text),
           totalAmounts: new Set(totalAmounts),
           tailAmounts: new Set(tailAmounts),
           lineItemAmounts: new Set(lineItemAmounts),
@@ -1169,7 +1186,7 @@ async function autoMatch() {
       } catch (e) {
         console.warn("OCR failed for", r.name, e);
         features.push({
-          receipt: r, ocrText: "", error: true,
+          receipt: r, ocrText: "", ocrNorm: "", error: true,
           totalAmounts: new Set(), tailAmounts: new Set(), lineItemAmounts: new Set(),
           allAmounts: new Set(), dates: new Set(),
         });
@@ -1192,9 +1209,9 @@ async function autoMatch() {
       else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단금액 ${e.amount.toLocaleString()}원 일치 +60`); }
       else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인항목금액 ${e.amount.toLocaleString()}원 일치 +25`); }
       if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치 +80`); }
-      const vMatched = tokens.vendor.filter(t => feat.ocrText.includes(t));
+      const vMatched = tokens.vendor.filter(t => feat.ocrNorm.includes(t));
       if (vMatched.length)                      { score += 60; reasons.push(`거래처 [${vMatched.join(",")}] 발견 +60`); }
-      const mMatched = tokens.memo.filter(t => feat.ocrText.includes(t) && !vMatched.includes(t));
+      const mMatched = tokens.memo.filter(t => feat.ocrNorm.includes(t) && !vMatched.includes(t));
       if (mMatched.length)                      { const b = Math.min(20, mMatched.length * 10); score += b; reasons.push(`적요 [${mMatched.join(",")}] 발견 +${b}`); }
       return { score, reasons };
     }
