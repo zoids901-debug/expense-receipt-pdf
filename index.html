@@ -445,7 +445,25 @@
   <header>
     <h1>법인카드 영수증 자동정리</h1>
     <span class="sub">하이웍스 표 + 영수증 → A4 PDF 자동 생성</span>
+    <button id="btn-settings" style="margin-left:auto;" title="API 설정">⚙️ 설정</button>
   </header>
+
+  <section class="panel" id="settings-panel" hidden>
+    <div class="step-label">⚙️ OCR 엔진 설정</div>
+    <div class="row" style="gap:12px;">
+      <label style="font-size:13px;">OCR 엔진:</label>
+      <label><input type="radio" name="ocr-engine" value="tesseract" checked> Tesseract (브라우저, 무료, 정확도 75-85%)</label>
+      <label><input type="radio" name="ocr-engine" value="vision"> Google Vision (Worker 경유, 무료한도 1000건/월, 정확도 95%+)</label>
+    </div>
+    <div class="row" id="worker-url-row" style="margin-top:8px;">
+      <label style="font-size:13px;">Worker URL:</label>
+      <input type="text" id="worker-url" placeholder="https://expense-receipt-vision.your-account.workers.dev" style="flex:1;">
+      <button id="btn-save-settings" class="primary">저장</button>
+    </div>
+    <div class="info" style="margin-top:6px;">
+      Google Vision 사용하려면 Cloudflare Worker 배포 필요 (저장소의 worker/README.md 참고).
+    </div>
+  </section>
 
   <section class="panel">
     <div class="step-label">① 하이웍스 거래내역 표를 복사해서 아래 칸에 붙여넣어주세요 (Ctrl+V)</div>
@@ -1079,6 +1097,41 @@ document.getElementById("btn-clear-receipts").addEventListener("click", () => {
 document.getElementById("btn-build").addEventListener("click", buildPdf);
 document.getElementById("btn-auto-match").addEventListener("click", autoMatch);
 
+// Settings panel
+(() => {
+  const panel = document.getElementById("settings-panel");
+  const btn = document.getElementById("btn-settings");
+  const radios = document.querySelectorAll('input[name="ocr-engine"]');
+  const urlInput = document.getElementById("worker-url");
+  const saveBtn = document.getElementById("btn-save-settings");
+  const urlRow = document.getElementById("worker-url-row");
+
+  // Load current settings into UI
+  const cur = getOcrSettings();
+  for (const r of radios) {
+    if (r.value === cur.engine) r.checked = true;
+    r.addEventListener("change", () => {
+      const isVision = r.value === "vision";
+      urlRow.style.display = isVision ? "" : "none";
+    });
+  }
+  urlInput.value = cur.workerUrl;
+  urlRow.style.display = cur.engine === "vision" ? "" : "none";
+
+  btn.addEventListener("click", () => { panel.hidden = !panel.hidden; });
+  saveBtn.addEventListener("click", () => {
+    const engine = document.querySelector('input[name="ocr-engine"]:checked').value;
+    const workerUrl = urlInput.value.trim().replace(/\/+$/, "");
+    if (engine === "vision" && !workerUrl) {
+      setStatus("Worker URL을 입력해주세요.", "error");
+      return;
+    }
+    setOcrSettings({ engine, workerUrl });
+    setStatus(`✓ 설정 저장됨 (현재 OCR: ${engine === "vision" ? "Google Vision" : "Tesseract"})`, "success");
+    panel.hidden = true;
+  });
+})();
+
 // ────────────────────────────────────────────────────────────────
 // Auto-match via OCR (Tesseract.js)
 // ────────────────────────────────────────────────────────────────
@@ -1214,6 +1267,59 @@ async function loadTesseract() {
   });
 }
 
+// ── OCR engine settings (persisted in localStorage)
+function getOcrSettings() {
+  return {
+    engine: localStorage.getItem("ocrEngine") || "tesseract",
+    workerUrl: localStorage.getItem("ocrWorkerUrl") || "",
+  };
+}
+function setOcrSettings({ engine, workerUrl }) {
+  if (engine !== undefined) localStorage.setItem("ocrEngine", engine);
+  if (workerUrl !== undefined) localStorage.setItem("ocrWorkerUrl", workerUrl);
+}
+
+// Run OCR on image, returning text. Picks engine based on settings.
+async function runOcr(dataUrl) {
+  const { engine, workerUrl } = getOcrSettings();
+  if (engine === "vision" && workerUrl) {
+    return ocrViaVisionWorker(dataUrl, workerUrl);
+  }
+  // Tesseract fallback (current default)
+  return ocrViaTesseract(dataUrl);
+}
+
+async function ocrViaVisionWorker(dataUrl, workerUrl) {
+  const resp = await fetch(workerUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: dataUrl }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Vision Worker (${resp.status}): ${err.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return data.text || "";
+}
+
+async function ocrViaTesseract(dataUrl) {
+  // Pass 1: original image
+  let { data } = await window._tesseractWorker.recognize(dataUrl);
+  let rawText = data.text || "";
+  // Quick quality check
+  const ampCount = (rawText.match(/\d{1,3}(?:,\d{3})+|\d{4,7}/g) || []).length;
+  const hasDate = /\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/.test(rawText);
+  if (ampCount < 3 || !hasDate) {
+    try {
+      const cleaned = await preprocessForOcr(dataUrl);
+      const second = await window._tesseractWorker.recognize(cleaned);
+      rawText = rawText + "\n----PREPROC----\n" + (second.data.text || "");
+    } catch (_) { /* ignore */ }
+  }
+  return rawText;
+}
+
 function setProgress(active, current, total, label) {
   const el = document.getElementById("progress");
   el.classList.toggle("active", !!active);
@@ -1239,13 +1345,15 @@ async function autoMatch() {
 
   const btn = document.getElementById("btn-auto-match");
   btn.disabled = true;
-  setStatus("글자 인식 엔진 준비 중… (최초 1회만 ~10초)", "");
-  setProgress(true, 0, unassigned.length, "글자 인식 엔진 준비 중…");
+  const { engine, workerUrl } = getOcrSettings();
+  const useVision = engine === "vision" && workerUrl;
+  setStatus(useVision ? "Google Vision 호출 준비 중…" : "글자 인식 엔진 준비 중… (최초 1회만 ~10초)", "");
+  setProgress(true, 0, unassigned.length, useVision ? "Google Vision 준비 중…" : "글자 인식 엔진 준비 중…");
   try {
-    await loadTesseract();
-    const worker = await Tesseract.createWorker(["kor", "eng"], 1, {
-      logger: () => {},
-    });
+    if (!useVision) {
+      await loadTesseract();
+      window._tesseractWorker = await Tesseract.createWorker(["kor", "eng"], 1, { logger: () => {} });
+    }
 
     // Total keyword regex — covers OCR errors (함계, 합 게 etc) and many synonyms
     const TOTAL_RE = /(합\s*[계겨게궤그]|함\s*[계겨게궤]|결\s*제\s*[금그]?\s*[액얙]|승\s*인\s*[금그]?\s*[액얙]|총\s*결\s*제|총\s*[액얙]|판\s*매\s*[금그]?\s*[액얙]|매\s*[출솔임]\s*[금그]?\s*[액얙]|받\s*은\s*[금그]?\s*[액얙]|total|amount\s*due)/i;
@@ -1325,23 +1433,7 @@ async function autoMatch() {
       setProgress(true, i, unassigned.length, `영수증 인식 중 (${i + 1}/${unassigned.length}): ${r.name}`);
       setProgressEta(startedAt, i, unassigned.length);
       try {
-        // Pass 1: original image
-        let { data } = await worker.recognize(r.dataUrl);
-        let rawText = data.text || "";
-
-        // Quick quality check: enough numeric signal + a date?
-        const ampCount = (rawText.match(/\d{1,3}(?:,\d{3})+|\d{4,7}/g) || []).length;
-        const hasDate = /\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/.test(rawText);
-
-        // If first pass looks weak, run a second pass on preprocessed image
-        // and combine results (union)
-        if (ampCount < 3 || !hasDate) {
-          try {
-            const cleaned = await preprocessForOcr(r.dataUrl);
-            const second = await worker.recognize(cleaned);
-            rawText = rawText + "\n----PREPROC----\n" + (second.data.text || "");
-          } catch (_) { /* preprocessing failed, keep original */ }
-        }
+        const rawText = await runOcr(r.dataUrl);
         // Normalize OCR artifacts: "17. 000" / "12, 100" / "17 000" → "17,000"
         const text = rawText
           .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
@@ -1404,7 +1496,10 @@ async function autoMatch() {
         });
       }
     }
-    await worker.terminate();
+    if (window._tesseractWorker) {
+      await window._tesseractWorker.terminate().catch(() => {});
+      window._tesseractWorker = null;
+    }
     state.processingReceiptId = null;
     renderReceipts();
 

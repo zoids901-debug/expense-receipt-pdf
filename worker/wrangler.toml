@@ -1,0 +1,10 @@
+name = "expense-receipt-vision"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Public origin allowlist (free to override per-deployment via `wrangler secret put`)
+[vars]
+ALLOWED_ORIGINS = "https://zoids901-debug.github.io"
+
+# API key set via:
+#   wrangler secret put GOOGLE_VISION_API_KEY
