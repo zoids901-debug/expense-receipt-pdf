@@ -44,6 +44,14 @@ export default {
       return json({ error: "invalid JSON" }, 400, cors);
     }
 
+    // Quota query (no OCR call, doesn't increment counter)
+    if (body.checkQuota) {
+      if (!env.COUNTER) return json({ used: 0, limit: MONTHLY_LIMIT, remaining: MONTHLY_LIMIT, skipped: true }, 200, cors);
+      const yearMonth = new Date().toISOString().slice(0, 7);
+      const current = parseInt(await env.COUNTER.get(`count:${yearMonth}`) || "0", 10);
+      return json({ used: current, limit: MONTHLY_LIMIT, remaining: MONTHLY_LIMIT - current }, 200, cors);
+    }
+
     let image = body.image || "";
     if (!image) return json({ error: "missing image field" }, 400, cors);
     image = image.replace(/^data:image\/[a-zA-Z+]+;base64,/, "");

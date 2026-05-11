@@ -44,6 +44,17 @@
   }
   header h1 { font-size: 18px; margin: 0; }
   header .sub { color: var(--muted); font-size: 13px; }
+  .quota-badge {
+    font-size: 12px;
+    color: var(--muted);
+    background: #eef2f7;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+  }
+  .quota-badge.warn { background: #fff4d6; color: #b07300; }
+  .quota-badge.danger { background: #fdecec; color: var(--danger); }
   section.panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -452,7 +463,8 @@
   <header>
     <h1>법인카드 영수증 자동정리</h1>
     <span class="sub">하이웍스 표 + 영수증 → A4 PDF 자동 생성</span>
-    <button id="btn-settings" style="margin-left:auto;" title="API 설정">⚙️ 설정</button>
+    <span id="quota-display" class="quota-badge" title="이번 달 OCR 사용량" style="margin-left:auto;">--/1000</span>
+    <button id="btn-settings" title="API 설정">⚙️ 설정</button>
   </header>
 
   <section class="panel" id="settings-panel" hidden>
@@ -1106,6 +1118,38 @@ document.getElementById("btn-clear-receipts").addEventListener("click", () => {
 document.getElementById("btn-build").addEventListener("click", buildPdf);
 document.getElementById("btn-auto-match").addEventListener("click", autoMatch);
 
+// ── Quota badge: fetch on load + update after each auto-match
+async function refreshQuotaBadge() {
+  const { engine, workerUrl } = getOcrSettings();
+  const el = document.getElementById("quota-display");
+  if (engine !== "vision" || !workerUrl) {
+    el.textContent = "Tesseract";
+    el.className = "quota-badge";
+    el.title = "Tesseract 사용 중 (무료, 무제한)";
+    return;
+  }
+  try {
+    const resp = await fetch(workerUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkQuota: true }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const q = await resp.json();
+    updateQuotaBadge(q);
+  } catch (e) {
+    el.textContent = "?/1000";
+    el.title = "쿼터 조회 실패: " + e.message;
+  }
+}
+function updateQuotaBadge({ used, limit, remaining }) {
+  const el = document.getElementById("quota-display");
+  el.textContent = `${used}/${limit}`;
+  el.title = `이번 달 OCR ${used}건 사용 · ${remaining}건 남음`;
+  el.className = "quota-badge" + (remaining < 50 ? " danger" : remaining < 200 ? " warn" : "");
+}
+refreshQuotaBadge();
+
 // Settings panel
 (() => {
   const panel = document.getElementById("settings-panel");
@@ -1311,6 +1355,7 @@ async function ocrViaVisionWorker(dataUrl, workerUrl) {
     throw new Error(`Vision Worker (${resp.status}): ${err.slice(0, 200)}`);
   }
   const data = await resp.json();
+  if (data.quota) updateQuotaBadge(data.quota);
   return data.text || "";
 }
 
