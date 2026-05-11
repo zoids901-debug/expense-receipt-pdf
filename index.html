@@ -122,6 +122,13 @@
   }
   table.entries tr:hover td { background: #fafbfc; }
   table.entries .col-amount { text-align: right; font-variant-numeric: tabular-nums; }
+  table.entries .col-num {
+    width: 36px;
+    text-align: center;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
   table.entries .col-receipt {
     width: 200px;
     text-align: center;
@@ -479,6 +486,7 @@
     <table class="entries">
       <thead>
         <tr>
+          <th class="col-num">#</th>
           <th>날짜</th>
           <th>계정과목</th>
           <th>거래처</th>
@@ -488,7 +496,7 @@
         </tr>
       </thead>
       <tbody id="entries-tbody">
-        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>
+        <tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>
       </tbody>
     </table>
   </section>
@@ -747,7 +755,7 @@ async function walkEntry(entry, out) {
 function renderEntries() {
   const tbody = document.getElementById("entries-tbody");
   if (state.entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 30px;">위에 표를 붙여넣고 [거래내역 불러오기] 버튼을 누르세요</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -755,6 +763,7 @@ function renderEntries() {
     const tr = document.createElement("tr");
     const md = e.date.slice(5).replace("-0", "/").replace("-", "/");
     tr.innerHTML = `
+      <td class="col-num">${idx + 1}</td>
       <td>${escapeHtml(md)}</td>
       <td>${escapeHtml(e.category)}</td>
       <td>${escapeHtml(e.vendor)}</td>
@@ -1154,7 +1163,8 @@ function renderMatchLog(log) {
     const tagText = { ok: "정상", suspect: "의심", fail: "실패" }[entry.kind];
     let targetHtml = "—";
     if (entry.target) {
-      targetHtml = `<span class="target">${escapeHtml(entry.target.date)} ${escapeHtml(entry.target.cat)} ${entry.target.amt.toLocaleString()}원</span>`;
+      const numPrefix = entry.target.num ? `<strong>#${entry.target.num}</strong> ` : "";
+      targetHtml = `<span class="target">${numPrefix}${escapeHtml(entry.target.date)} ${escapeHtml(entry.target.cat)} ${entry.target.amt.toLocaleString()}원</span>`;
     }
     const ocrInfo = [
       entry.ocrDates.length ? `날짜 ${entry.ocrDates.join(", ")}` : "날짜 못읽음",
@@ -1492,7 +1502,7 @@ async function autoMatch() {
           receipt: feat.receipt.name,
           ocrAmounts: [...feat.allAmounts],
           ocrDates: [...feat.dates],
-          target: { date: state.entries[bestIdx].date.slice(5), cat: state.entries[bestIdx].category, amt: state.entries[bestIdx].amount, vendor: state.entries[bestIdx].vendor },
+          target: { num: bestIdx + 1, date: state.entries[bestIdx].date.slice(5), cat: state.entries[bestIdx].category, amt: state.entries[bestIdx].amount, vendor: state.entries[bestIdx].vendor },
           reason: `점수 ${bestScore}점 (실시간 매칭) — ${bestReasons.join(" · ")}`,
         });
         feat._assigned = true;
@@ -1599,7 +1609,7 @@ async function autoMatch() {
         receipt: feat.receipt.name,
         ocrAmounts: [...feat.allAmounts],
         ocrDates: [...feat.dates],
-        target: { date: entry.date.slice(5), cat: entry.category, amt: entry.amount, vendor: entry.vendor },
+        target: { num: p.ei + 1, date: entry.date.slice(5), cat: entry.category, amt: entry.amount, vendor: entry.vendor },
         reason: `점수 ${p.score}점 — ${p.reasons.join(" · ")}`,
       });
       renderEntries();
