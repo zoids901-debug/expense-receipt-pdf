@@ -1,14 +1,25 @@
 /**
- * Cloudflare Worker: Google Vision OCR proxy.
+ * Cloudflare Worker: Google Vision OCR proxy with monthly quota.
  * Receives POST { image: dataUrl-or-base64 } → returns { text: string }.
  *
- * Env vars (configure with `wrangler secret put`):
- *   GOOGLE_VISION_API_KEY  — Google Cloud Vision API key
- *   ALLOWED_ORIGINS        — comma-separated list, e.g. "https://zoids901-debug.github.io"
- *                            (use "*" only for testing)
+ * Required env:
+ *   GOOGLE_VISION_API_KEY  — Google Cloud Vision API key (Secret)
+ *   ALLOWED_ORIGINS        — comma-separated list (Variable)
+ *   COUNTER                — KV namespace binding for monthly counter
  */
 
 const DEFAULT_ALLOWED = "https://zoids901-debug.github.io";
+const MONTHLY_LIMIT = 1000;
+
+async function checkAndIncrement(env) {
+  if (!env.COUNTER) return { ok: true, count: 0, skipped: true };
+  const yearMonth = new Date().toISOString().slice(0, 7); // "2026-05"
+  const key = `count:${yearMonth}`;
+  const current = parseInt(await env.COUNTER.get(key) || "0", 10);
+  if (current >= MONTHLY_LIMIT) return { ok: false, count: current };
+  await env.COUNTER.put(key, String(current + 1), { expirationTtl: 40 * 86400 });
+  return { ok: true, count: current + 1 };
+}
 
 export default {
   async fetch(request, env) {
@@ -42,6 +53,16 @@ export default {
     const apiKey = env.GOOGLE_VISION_API_KEY;
     if (!apiKey) return json({ error: "server misconfigured: missing API key" }, 500, cors);
 
+    // Monthly quota check
+    const quota = await checkAndIncrement(env);
+    if (!quota.ok) {
+      return json({
+        error: `이번 달 OCR 호출 한도(${MONTHLY_LIMIT}회) 초과. 다음 달 1일 자동 리셋됩니다.`,
+        count: quota.count,
+        limit: MONTHLY_LIMIT,
+      }, 429, cors);
+    }
+
     const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
     const visionResp = await fetch(visionUrl, {
       method: "POST",
@@ -62,7 +83,10 @@ export default {
 
     const data = await visionResp.json();
     const text = data?.responses?.[0]?.fullTextAnnotation?.text || "";
-    return json({ text }, 200, cors);
+    return json({
+      text,
+      quota: { used: quota.count, limit: MONTHLY_LIMIT, remaining: MONTHLY_LIMIT - quota.count },
+    }, 200, cors);
   },
 };
 

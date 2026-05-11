@@ -1268,10 +1268,11 @@ async function loadTesseract() {
 }
 
 // ── OCR engine settings (persisted in localStorage)
+const DEFAULT_VISION_WORKER = "https://expense-receipt-vision.zoids901.workers.dev/";
 function getOcrSettings() {
   return {
-    engine: localStorage.getItem("ocrEngine") || "tesseract",
-    workerUrl: localStorage.getItem("ocrWorkerUrl") || "",
+    engine: localStorage.getItem("ocrEngine") || "vision",
+    workerUrl: localStorage.getItem("ocrWorkerUrl") || DEFAULT_VISION_WORKER,
   };
 }
 function setOcrSettings({ engine, workerUrl }) {
