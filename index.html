@@ -1422,124 +1422,159 @@ async function autoMatch() {
       memo: tokenize(e.memo),
     }));
 
-    // Phase 1: OCR all receipts and extract features (amounts, dates, raw text)
-    const features = []; // [{receipt, ocrText, totalAmounts, tailAmounts, lineItemAmounts, allAmounts, dates}]
+    // Phase 1: OCR all receipts in parallel (concurrency 5), with progress + real-time assignment
+    const features = new Array(unassigned.length);
     const startedAt = performance.now();
     const matchLog = [];
-    for (let i = 0; i < unassigned.length; i++) {
-      const r = unassigned[i];
-      state.processingReceiptId = r.id;
-      renderReceipts();
-      setStatus(`영수증 글자 인식 중: ${i + 1}/${unassigned.length} — ${r.name}`, "");
-      setProgress(true, i, unassigned.length, `영수증 인식 중 (${i + 1}/${unassigned.length}): ${r.name}`);
-      setProgressEta(startedAt, i, unassigned.length);
-      try {
-        const rawText = await runOcr(r.dataUrl);
-        // Normalize OCR artifacts: "17. 000" / "12, 100" / "17 000" → "17,000"
-        const text = rawText
-          .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
-          .replace(/(\d)\s+(\d{3})(?!\d)/g, "$1,$2");
+    let completed = 0;
 
-        // Extract dates (MM-DD format) — strict: require 4-digit year OR keyword-adjacent
-        const dates = new Set();
-        const addDate = (m, d) => {
-          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-            dates.add(`${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
-          }
-        };
-        for (const re of DATE_PATTERNS_STRICT) {
-          for (const m of text.matchAll(re)) addDate(parseInt(m[1], 10), parseInt(m[2], 10));
+    // Index entries for fast scoring during real-time assignment
+    const entryByIdx = state.entries;
+    const HIGH_SCORE = 200; // immediate-assign threshold
+
+    function extractFeaturesFromText(receipt, rawText) {
+      // Normalize OCR artifacts
+      const text = rawText
+        .replace(/(\d)\s*[.,，]\s*(\d{3})(?!\d)/g, "$1,$2")
+        .replace(/(\d)\s+(\d{3})(?!\d)/g, "$1,$2");
+      const dates = new Set();
+      const addDate = (m, d) => {
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          dates.add(`${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
         }
-        // Bare MM-DD: only if same line contains a date keyword AND not preceded by phone-like prefix
-        for (const line of text.split("\n")) {
-          if (!DATE_KEYWORD_RE.test(line)) continue;
-          for (const m of line.matchAll(/(?<!\d)(?<![-./])(\d{1,2})[-./](\d{1,2})(?!\d)(?![-./])/g)) {
-            // Skip if the line also looks like a phone (starts 02-/010-/070-/1577-/1588-)
-            if (/(?:^|\D)(02|0[1-9]\d|1[0-9]{3})[-.]\d/.test(line) && !/[년월일판매거래결제]/.test(line)) continue;
-            addDate(parseInt(m[1], 10), parseInt(m[2], 10));
-          }
-        }
-
-        // Bucket amounts by location: total-line, tail (last 30%), other
-        const lines = text.split("\n");
-        const tailStart = Math.floor(lines.length * 0.7);
-        const totalAmounts = [];   // amounts on 합계/결제 lines
-        const tailAmounts = [];    // amounts in last 30% of receipt
-        const lineItemAmounts = []; // amounts elsewhere (likely menu items)
-        lines.forEach((line, idx) => {
-          const isTotal = TOTAL_RE.test(line);
-          const isTail = idx >= tailStart;
-          for (const m of line.matchAll(/\d{1,3}(?:,\d{3})+|\d{4,7}/g)) {
-            const n = parseInt(m[0].replace(/,/g, ""), 10);
-            if (n < 1000 || n > 5000000) continue;
-            if (isTotal) totalAmounts.push(n);
-            else if (isTail) tailAmounts.push(n);
-            else lineItemAmounts.push(n);
-          }
-        });
-
-        features.push({
-          receipt: r,
-          ocrText: text,
-          ocrNorm: normalizeOcr(text),
-          totalAmounts: new Set(totalAmounts),
-          tailAmounts: new Set(tailAmounts),
-          lineItemAmounts: new Set(lineItemAmounts),
-          allAmounts: new Set([...totalAmounts, ...tailAmounts, ...lineItemAmounts]),
-          dates,
-        });
-      } catch (e) {
-        console.warn("OCR failed for", r.name, e);
-        features.push({
-          receipt: r, ocrText: "", ocrNorm: "", error: true,
-          totalAmounts: new Set(), tailAmounts: new Set(), lineItemAmounts: new Set(),
-          allAmounts: new Set(), dates: new Set(),
-        });
+      };
+      for (const re of DATE_PATTERNS_STRICT) {
+        for (const m of text.matchAll(re)) addDate(parseInt(m[1], 10), parseInt(m[2], 10));
       }
+      for (const line of text.split("\n")) {
+        if (!DATE_KEYWORD_RE.test(line)) continue;
+        for (const m of line.matchAll(/(?<!\d)(?<![-./])(\d{1,2})[-./](\d{1,2})(?!\d)(?![-./])/g)) {
+          if (/(?:^|\D)(02|0[1-9]\d|1[0-9]{3})[-.]\d/.test(line) && !/[년월일판매거래결제]/.test(line)) continue;
+          addDate(parseInt(m[1], 10), parseInt(m[2], 10));
+        }
+      }
+      const lines = text.split("\n");
+      const tailStart = Math.floor(lines.length * 0.7);
+      const totalAmounts = [], tailAmounts = [], lineItemAmounts = [];
+      lines.forEach((line, idx) => {
+        const isTotal = TOTAL_RE.test(line);
+        const isTail = idx >= tailStart;
+        for (const m of line.matchAll(/\d{1,3}(?:,\d{3})+|\d{4,7}/g)) {
+          const n = parseInt(m[0].replace(/,/g, ""), 10);
+          if (n < 1000 || n > 5000000) return;
+          (isTotal ? totalAmounts : isTail ? tailAmounts : lineItemAmounts).push(n);
+        }
+      });
+      return {
+        receipt,
+        ocrText: text,
+        ocrNorm: normalizeOcr(text),
+        totalAmounts: new Set(totalAmounts),
+        tailAmounts: new Set(tailAmounts),
+        lineItemAmounts: new Set(lineItemAmounts),
+        allAmounts: new Set([...totalAmounts, ...tailAmounts, ...lineItemAmounts]),
+        dates,
+      };
     }
-    if (window._tesseractWorker) {
-      await window._tesseractWorker.terminate().catch(() => {});
-      window._tesseractWorker = null;
+
+    // Try to assign feature immediately if any unassigned entry scores >= HIGH_SCORE
+    function tryRealtimeAssign(feat) {
+      let bestScore = 0, bestIdx = -1, bestReasons = [];
+      for (let ei = 0; ei < state.entries.length; ei++) {
+        if (state.entries[ei].receiptId) continue;
+        const { score, reasons } = scorePair(feat, ei);
+        if (score > bestScore) { bestScore = score; bestIdx = ei; bestReasons = reasons; }
+      }
+      if (bestScore >= HIGH_SCORE && bestIdx >= 0) {
+        state.entries[bestIdx].receiptId = feat.receipt.id;
+        matchLog.push({
+          kind: "ok",
+          receipt: feat.receipt.name,
+          ocrAmounts: [...feat.allAmounts],
+          ocrDates: [...feat.dates],
+          target: { date: state.entries[bestIdx].date.slice(5), cat: state.entries[bestIdx].category, amt: state.entries[bestIdx].amount, vendor: state.entries[bestIdx].vendor },
+          reason: `점수 ${bestScore}점 (실시간 매칭) — ${bestReasons.join(" · ")}`,
+        });
+        feat._assigned = true;
+        renderEntries();
+        renderReceipts();
+        return true;
+      }
+      return false;
     }
-    state.processingReceiptId = null;
-    renderReceipts();
 
-    // Phase 2: score every (receipt, entry) pair, sort by score, greedy assign
-    setStatus("매칭 점수 계산 중…", "");
-    const unassignedEntryIndices = state.entries.map((e, idx) => e.receiptId ? -1 : idx).filter(i => i >= 0);
-
+    // Score function (defined here so tryRealtimeAssign can use it)
     function scorePair(feat, entryIdx) {
       const e = state.entries[entryIdx];
       const tokens = entryTokens[entryIdx];
       let score = 0;
       const reasons = [];
-      if (feat.totalAmounts.has(e.amount))      { score += 100; reasons.push(`합계금액 ${e.amount.toLocaleString()}원 일치 +100`); }
-      else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단금액 ${e.amount.toLocaleString()}원 일치 +60`); }
-      else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인항목금액 ${e.amount.toLocaleString()}원 일치 +25`); }
-      if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치 +80`); }
+      if (feat.totalAmounts.has(e.amount))      { score += 100; reasons.push(`합계 ${e.amount.toLocaleString()}원 일치`); }
+      else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단 ${e.amount.toLocaleString()}원 일치`); }
+      else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인 ${e.amount.toLocaleString()}원 일치`); }
+      if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치`); }
       const vMatched = tokens.vendor.filter(t => feat.ocrNorm.includes(t));
-      if (vMatched.length) {
-        score += 60; reasons.push(`거래처 [${vMatched.join(",")}] 발견 +60`);
-      } else {
-        // Fuzzy: bigram coverage ≥ 85% on tokens of length ≥ 4
-        const fuzzyHits = [];
+      if (vMatched.length) { score += 60; reasons.push(`거래처 [${vMatched.join(",")}]`); }
+      else {
+        const fz = [];
         for (const t of tokens.vendor) {
           const sim = fuzzyContains(t, feat.ocrNorm);
-          if (sim >= 0.85) fuzzyHits.push({ t, sim });
+          if (sim >= 0.85) fz.push(`${t}(${Math.round(sim * 100)}%)`);
         }
-        if (fuzzyHits.length) {
-          score += 30;
-          const list = fuzzyHits.map(f => `${f.t}(${Math.round(f.sim * 100)}%)`).join(",");
-          reasons.push(`거래처 유사 [${list}] 발견 +30`);
-        }
+        if (fz.length) { score += 30; reasons.push(`거래처 유사 [${fz.join(",")}]`); }
       }
       const mMatched = tokens.memo.filter(t => feat.ocrNorm.includes(t) && !vMatched.includes(t));
-      if (mMatched.length)                      { const b = Math.min(20, mMatched.length * 10); score += b; reasons.push(`적요 [${mMatched.join(",")}] 발견 +${b}`); }
+      if (mMatched.length) { const b = Math.min(20, mMatched.length * 10); score += b; reasons.push(`적요 [${mMatched.join(",")}]`); }
       return { score, reasons };
     }
 
+    // Parallel OCR with concurrency = 5
+    const CONCURRENCY = 5;
+    let nextIdx = 0;
+    async function ocrWorker() {
+      while (nextIdx < unassigned.length) {
+        const i = nextIdx++;
+        const r = unassigned[i];
+        try {
+          const rawText = await runOcr(r.dataUrl);
+          const feat = extractFeaturesFromText(r, rawText);
+          features[i] = feat;
+          // Try real-time assignment for confident matches
+          tryRealtimeAssign(feat);
+        } catch (e) {
+          console.warn("OCR failed:", r.name, e);
+          features[i] = {
+            receipt: r, ocrText: "", ocrNorm: "", error: true,
+            totalAmounts: new Set(), tailAmounts: new Set(),
+            lineItemAmounts: new Set(), allAmounts: new Set(), dates: new Set(),
+          };
+        }
+        completed++;
+        setStatus(`영수증 인식 중: ${completed}/${unassigned.length}`, "");
+        setProgress(true, completed, unassigned.length, `영수증 인식 중 (${completed}/${unassigned.length})`);
+        setProgressEta(startedAt, completed, unassigned.length);
+      }
+    }
+    await Promise.all(Array(Math.min(CONCURRENCY, unassigned.length)).fill().map(ocrWorker));
+    state.processingReceiptId = null;
+    renderReceipts();
+
+    // Phase 2: scoring + greedy assignment for any not yet assigned
+    setStatus("나머지 매칭 분석 중…", "");
+    setProgress(true, unassigned.length, unassigned.length, "최종 매칭 중…");
+
+    // Tesseract worker cleanup (if it was loaded)
+    if (window._tesseractWorker) {
+      await window._tesseractWorker.terminate().catch(() => {});
+      window._tesseractWorker = null;
+    }
+
+    // Greedy global assignment for any features not yet assigned in real-time
+    const unassignedEntryIndices = state.entries.map((e, idx) => e.receiptId ? -1 : idx).filter(i => i >= 0);
+    const pendingFeatureIndices = features.map((f, i) => (f && !f._assigned && !f.error) ? i : -1).filter(i => i >= 0);
+
     const pairs = [];
-    for (let fi = 0; fi < features.length; fi++) {
+    for (const fi of pendingFeatureIndices) {
       for (const ei of unassignedEntryIndices) {
         const r = scorePair(features[fi], ei);
         if (r.score > 0) pairs.push({ fi, ei, score: r.score, reasons: r.reasons });
@@ -1549,7 +1584,7 @@ async function autoMatch() {
 
     const usedF = new Set(), usedE = new Set();
     const MIN_SCORE = 80;
-    let matched = 0;
+    let matched = features.filter(f => f && f._assigned).length;
     for (const p of pairs) {
       if (usedF.has(p.fi) || usedE.has(p.ei)) continue;
       if (p.score < MIN_SCORE) break;
@@ -1572,7 +1607,7 @@ async function autoMatch() {
     }
 
     // Log unmatched receipts
-    for (let fi = 0; fi < features.length; fi++) {
+    for (const fi of pendingFeatureIndices) {
       if (usedF.has(fi)) continue;
       const feat = features[fi];
       const bestPair = pairs.find(p => p.fi === fi);
@@ -1582,13 +1617,22 @@ async function autoMatch() {
         ocrAmounts: [...feat.allAmounts],
         ocrDates: [...feat.dates],
         target: null,
-        reason: feat.error
-          ? "글자 인식 실패 (사진이 너무 어둡거나 흐림)"
-          : bestPair
-            ? `최고 점수 ${bestPair.score}점이 임계값(${MIN_SCORE}점) 미달`
-            : "표 항목과 일치하는 신호 없음",
+        reason: bestPair
+          ? `최고 점수 ${bestPair.score}점이 임계값(${MIN_SCORE}점) 미달`
+          : "표 항목과 일치하는 신호 없음",
       });
     }
+    // Errored features
+    features.forEach((f, fi) => {
+      if (!f || !f.error) return;
+      matchLog.push({
+        kind: "fail",
+        receipt: f.receipt.name,
+        ocrAmounts: [], ocrDates: [],
+        target: null,
+        reason: "글자 인식 실패 (사진이 너무 어둡거나 흐림)",
+      });
+    });
 
     setProgress(true, unassigned.length, unassigned.length, "완료");
     document.getElementById("progress-eta").textContent = "";
