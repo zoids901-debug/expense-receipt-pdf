@@ -586,7 +586,7 @@ const CATEGORIES = new Set([
 ]);
 const SUPPORTED_EXT = ["jpg", "jpeg", "png", "pdf", "bmp", "webp"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const AMOUNT_RE = /^[\d,]+$/;
+const AMOUNT_RE = /^-?[\d,]+$/;
 
 const state = {
   entries: [],         // [{date, category, vendor, memo, amount, receiptId}]
