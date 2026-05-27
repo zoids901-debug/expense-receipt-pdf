@@ -1565,6 +1565,37 @@ async function autoMatch() {
           (isTotal ? totalAmounts : isTail ? tailAmounts : lineItemAmounts).push(n);
         }
       });
+      // 부분합 매칭 — 쿠팡처럼 한 결제가 vendor별로 쪼개진 영수증의 합계들을
+      // 합쳐 표 행 금액과 매칭. 합계/하단 금액 풀에서 2~3개 조합 + 전체 합.
+      const candidatePool = [...new Set([...totalAmounts, ...tailAmounts])].filter(a => a > 0).slice(0, 8);
+      const partialSums = new Map();   // sum → "17,880+12,560" 형태 조합 설명
+      const N = candidatePool.length;
+      if (N >= 2) {
+        for (let i = 0; i < N; i++) {
+          for (let j = i + 1; j < N; j++) {
+            const s = candidatePool[i] + candidatePool[j];
+            if (!partialSums.has(s)) {
+              partialSums.set(s, `${candidatePool[i].toLocaleString()}+${candidatePool[j].toLocaleString()}`);
+            }
+          }
+        }
+        if (N <= 6) {
+          for (let i = 0; i < N; i++) {
+            for (let j = i + 1; j < N; j++) {
+              for (let k = j + 1; k < N; k++) {
+                const s = candidatePool[i] + candidatePool[j] + candidatePool[k];
+                if (!partialSums.has(s)) {
+                  partialSums.set(s, `${candidatePool[i].toLocaleString()}+${candidatePool[j].toLocaleString()}+${candidatePool[k].toLocaleString()}`);
+                }
+              }
+            }
+          }
+        }
+        const all = candidatePool.reduce((a, b) => a + b, 0);
+        if (!partialSums.has(all)) {
+          partialSums.set(all, candidatePool.map(a => a.toLocaleString()).join("+"));
+        }
+      }
       return {
         receipt,
         ocrText: text,
@@ -1573,6 +1604,7 @@ async function autoMatch() {
         tailAmounts: new Set(tailAmounts),
         lineItemAmounts: new Set(lineItemAmounts),
         allAmounts: new Set([...totalAmounts, ...tailAmounts, ...lineItemAmounts]),
+        partialSums,
         dates,
       };
     }
@@ -1609,9 +1641,24 @@ async function autoMatch() {
       const tokens = entryTokens[entryIdx];
       let score = 0;
       const reasons = [];
-      if (feat.totalAmounts.has(e.amount))      { score += 100; reasons.push(`합계 ${e.amount.toLocaleString()}원 일치`); }
-      else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단 ${e.amount.toLocaleString()}원 일치`); }
-      else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인 ${e.amount.toLocaleString()}원 일치`); }
+      let amtMatched = false;
+      if (feat.totalAmounts.has(e.amount))      { score += 100; reasons.push(`합계 ${e.amount.toLocaleString()}원 일치`); amtMatched = true; }
+      else if (feat.tailAmounts.has(e.amount))  { score += 60;  reasons.push(`하단 ${e.amount.toLocaleString()}원 일치`); amtMatched = true; }
+      else if (feat.partialSums && feat.partialSums.has(e.amount)) {
+        score += 90;
+        reasons.push(`합산 ${e.amount.toLocaleString()}원 일치 (${feat.partialSums.get(e.amount)})`);
+        amtMatched = true;
+      }
+      else if (feat.lineItemAmounts.has(e.amount)) { score += 25; reasons.push(`라인 ${e.amount.toLocaleString()}원 일치`); amtMatched = true; }
+      // 소액(< 1,000원) — 일반 amount 추출에서 빠지는 케이스 (예: CLAUDE.AI 100원, 부가세 환급)
+      // OCR 텍스트에 정확한 숫자가 있으면 약한 매칭(+40)
+      if (!amtMatched && e.amount > 0 && e.amount < 1000) {
+        const amtRe = new RegExp(`(?:^|[^\\d])${e.amount}(?:[^\\d]|$)`);
+        if (amtRe.test(feat.ocrText)) {
+          score += 40;
+          reasons.push(`소액 ${e.amount}원 텍스트 매칭`);
+        }
+      }
       if (feat.dates.has(e.date.slice(5)))      { score += 80; reasons.push(`날짜 ${e.date.slice(5)} 일치`); }
       const vMatched = tokens.vendor.filter(t => feat.ocrNorm.includes(t));
       if (vMatched.length) { score += 60; reasons.push(`거래처 [${vMatched.join(",")}]`); }
