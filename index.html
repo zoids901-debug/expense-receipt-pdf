@@ -579,7 +579,7 @@ window.dispatchEvent(new Event("pdfjs-ready"));
 // State
 // ────────────────────────────────────────────────────────────────
 const CATEGORIES = new Set([
-  "여비교통비", "베이커리개발비", "메뉴개발비", "복리후생비",
+  "여비교통비", "베이커리개발비", "커피개발비", "메뉴개발비", "복리후생비",
   "통신비", "소모품비", "접대비", "광고선전비", "교육훈련비",
   "수수료", "운반비", "도서인쇄비", "회의비", "차량유지비",
   "사무용품비", "지급수수료", "외주용역비",
@@ -641,7 +641,8 @@ function parseB(raw) {
   while (i < lines.length && !DATE_RE.test(lines[i])) i++;
   const out = [];
   while (i < lines.length) {
-    if (lines[i].startsWith("합계") || lines[i].includes("총 사용 금액")) break;
+    // 합계/총사용금액/헤더 줄은 skip하고 다음 날짜까지 계속 (2페이지 분할 입력 지원)
+    if (lines[i].startsWith("합계") || lines[i].includes("총 사용 금액")) { i++; continue; }
     if (!DATE_RE.test(lines[i])) { i++; continue; }
     if (i + 6 >= lines.length) break;
     const date = lines[i];
@@ -1394,8 +1395,52 @@ function setProgressEta(startedAt, current, total) {
   document.getElementById("progress-eta").textContent = text;
 }
 
+// 쿠팡처럼 한 결제가 vendor별로 여러 PDF로 쪼개진 영수증을 orderId 기준으로 묶어 1장 PDF로 병합.
+// 같은 orderId 영수증이 2개 이상일 때만 동작 — 단일은 그대로 둠.
+async function groupCoupangReceipts() {
+  const PDFLib = window.PDFLib;
+  if (!PDFLib) return;
+  const byOrder = new Map();
+  for (const r of state.receipts.values()) {
+    if (r.kind !== "pdf" || r.coupangMerged) continue;
+    if (state.entries.some(e => e.receiptId === r.id)) continue;
+    const m = r.name.match(/orderId=(\d+)/);
+    if (!m) continue;
+    const key = m[1];
+    if (!byOrder.has(key)) byOrder.set(key, []);
+    byOrder.get(key).push(r);
+  }
+  for (const [orderId, rs] of byOrder) {
+    if (rs.length < 2) continue;
+    try {
+      const merged = await PDFLib.PDFDocument.create();
+      for (const r of rs) {
+        const buf = await r.file.arrayBuffer();
+        const doc = await PDFLib.PDFDocument.load(buf);
+        const pages = await merged.copyPages(doc, doc.getPageIndices());
+        pages.forEach(p => merged.addPage(p));
+      }
+      const bytes = await merged.save();
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const fakeFile = new File([blob], `coupang_orderId=${orderId}_${rs.length}장.pdf`, { type: "application/pdf" });
+      const newR = await fileToReceipt(fakeFile);
+      if (newR) {
+        newR.coupangMerged = true;
+        newR.groupedFrom = rs.map(r => r.id);
+        state.receipts.set(newR.id, newR);
+      }
+      for (const r of rs) state.receipts.delete(r.id);
+    } catch (e) {
+      console.warn("쿠팡 merge 실패:", orderId, e);
+    }
+  }
+  renderReceipts();
+}
+
 async function autoMatch() {
   if (state.entries.length === 0) { setStatus("먼저 거래내역을 불러와주세요.", "error"); return; }
+  // 쿠팡 vendor별 분할 영수증을 orderId 기준 1장 PDF로 자동 병합
+  try { await groupCoupangReceipts(); } catch (e) { console.warn("쿠팡 그룹화 실패:", e); }
   const unassigned = Array.from(state.receipts.values()).filter(r => !state.entries.some(e => e.receiptId === r.id));
   if (unassigned.length === 0) { setStatus("연결할 영수증이 없습니다.", "error"); return; }
 
