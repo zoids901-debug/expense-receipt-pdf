@@ -184,6 +184,44 @@
     background: #eaf2fe;
     color: var(--primary);
   }
+  /* 그룹 영수증 (쿠팡 vendor 분할 등) — 토글로 N장 펼침 */
+  .receipt-cell.grouped .grouped-collapsed,
+  .receipt-cell.grouped .grouped-expanded {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+  }
+  .receipt-cell.grouped .grouped-expanded {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    gap: 4px;
+    padding: 4px;
+  }
+  .receipt-cell.grouped .grouped-expanded img {
+    width: 100%;
+    max-width: none;
+    height: 56px;
+    max-height: none;
+    object-fit: cover;
+    border: 1px solid #d8e1d9;
+    border-radius: 3px;
+  }
+  .receipt-cell.grouped .group-toggle,
+  .receipt-cell.grouped .group-collapse {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    padding: 3px 8px;
+    border: 1px solid #c2d4c5;
+    background: #ffffff;
+    border-radius: 4px;
+    color: #2e6b34;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .receipt-cell.grouped .group-toggle:hover,
+  .receipt-cell.grouped .group-collapse:hover { background: #eef6ef; }
   .thumb-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -791,12 +829,49 @@ function renderEntries() {
     if (e.receiptId && state.receipts.has(e.receiptId)) {
       const r = state.receipts.get(e.receiptId);
       drop.classList.add("has-image");
-      drop.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
+      const grouped = Array.isArray(r.groupedThumbnails) && r.groupedThumbnails.length > 1;
+      if (grouped) {
+        const n = r.groupedThumbnails.length;
+        drop.classList.add("grouped");
+        drop.innerHTML = `
+          <div class="grouped-collapsed">
+            <img src="${r.groupedThumbnails[0].dataUrl}" alt="" data-gidx="0">
+            <button class="group-toggle" type="button">📎 +${n - 1}장 ▼</button>
+          </div>
+          <div class="grouped-expanded" hidden>
+            ${r.groupedThumbnails.map((t, i) => `<img src="${t.dataUrl}" alt="" title="${escapeHtml(t.name)}" data-gidx="${i}">`).join("")}
+            <button class="group-collapse" type="button">▲ 접기</button>
+          </div>
+          <div class="filename">${escapeHtml(r.name)}</div>
+        `;
+        drop.querySelector(".group-toggle").addEventListener("click", ev => {
+          ev.stopPropagation();
+          drop.classList.add("expanded");
+          drop.querySelector(".grouped-collapsed").hidden = true;
+          drop.querySelector(".grouped-expanded").hidden = false;
+        });
+        drop.querySelector(".group-collapse").addEventListener("click", ev => {
+          ev.stopPropagation();
+          drop.classList.remove("expanded");
+          drop.querySelector(".grouped-collapsed").hidden = false;
+          drop.querySelector(".grouped-expanded").hidden = true;
+        });
+        drop.querySelectorAll("img").forEach(img => {
+          img.addEventListener("click", ev => {
+            ev.stopPropagation();
+            const i = parseInt(img.dataset.gidx, 10);
+            const t = r.groupedThumbnails[i];
+            showLightbox(t.dataUrl, t.name);
+          });
+        });
+      } else {
+        drop.innerHTML = `<img src="${r.dataUrl}" alt=""><div class="filename">${escapeHtml(r.name)}</div>`;
+        drop.querySelector("img").addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          showLightbox(r.dataUrl, r.name);
+        });
+      }
       drop.draggable = true;
-      drop.querySelector("img").addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        showLightbox(r.dataUrl, r.name);
-      });
       drop.addEventListener("dragstart", ev => {
         ev.dataTransfer.setData("application/x-receipt-id", r.id);
         ev.dataTransfer.setData("application/x-from-entry", String(idx));
@@ -1427,6 +1502,8 @@ async function groupCoupangReceipts() {
       if (newR) {
         newR.coupangMerged = true;
         newR.groupedFrom = rs.map(r => r.id);
+        // 원본 N장의 썸네일 보관 — 표 영수증 칸에서 토글로 펼침 표시용
+        newR.groupedThumbnails = rs.map(r => ({ name: r.name, dataUrl: r.dataUrl }));
         state.receipts.set(newR.id, newR);
       }
       for (const r of rs) state.receipts.delete(r.id);
