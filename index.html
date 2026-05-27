@@ -1021,8 +1021,9 @@ async function loadKoreanFont() {
 function makeLabel(e) {
   const date = e.date.slice(5).replace(/^0/, "").replace("-0", "/").replace("-", "/");
   const parts = [`${date} ${e.category}`];
-  if (e.memo) parts.push(`-${e.memo}`);
   if (e.vendor) parts.push(` (${e.vendor})`);
+  parts.push(` ${e.amount.toLocaleString()}원`);
+  if (e.memo) parts.push(` -${e.memo}`);
   return parts.join("");
 }
 
@@ -1072,54 +1073,62 @@ async function buildPdf() {
     const PER_PAGE = COLS * ROWS;
 
     let page = null;
+    let slotIdx = 0;     // 그룹 영수증 N장도 별도 slot 차지하므로 entries 인덱스와 분리
     for (let i = 0; i < state.entries.length; i++) {
-      const slot = i % PER_PAGE;
-      if (slot === 0) page = doc.addPage(A4);
-      const col = slot % COLS;
-      const row = Math.floor(slot / COLS);
-      const x = MARGIN + col * (CELL_W + GAP_X);
-      const y = PAGE_H - MARGIN - (row + 1) * CELL_H - row * GAP_Y;
-
       const e = state.entries[i];
-      const label = makeLabel(e);
-      // Auto-shrink
-      let fontSize = 9;
-      while (fontSize > 6 && font.widthOfTextAtSize(label, fontSize) > CELL_W) fontSize -= 1;
-      page.drawText(label, {
-        x: x,
-        y: y + CELL_H - 4 * MM,
-        size: fontSize,
-        font,
-        color: rgb(0, 0, 0),
-      });
+      const r = e.receiptId ? state.receipts.get(e.receiptId) : null;
+      const grouped = r && Array.isArray(r.groupedThumbnails) && r.groupedThumbnails.length > 1;
+      const sheets = grouped ? r.groupedThumbnails.length : 1;
 
-      if (e.receiptId && state.receipts.has(e.receiptId)) {
-        const r = state.receipts.get(e.receiptId);
-        const { bytes, width, height } = await dataUrlToImageBytes(r.dataUrl);
-        const img = await doc.embedJpg(bytes);
-        const scale = Math.min(CELL_W / width, IMG_H / height);
-        const iw = width * scale;
-        const ih = height * scale;
-        const ix = x + (CELL_W - iw) / 2;
-        const iy = y + (IMG_H - ih) / 2;
-        page.drawImage(img, { x: ix, y: iy, width: iw, height: ih });
-      } else {
-        // Dashed placeholder
-        page.drawRectangle({
-          x, y, width: CELL_W, height: IMG_H,
-          borderColor: rgb(0.7, 0.7, 0.7),
-          borderWidth: 0.5,
-          borderDashArray: [3, 3],
-        });
-        const placeholder = "[ 영수증 누락 ]";
-        const pw = font.widthOfTextAtSize(placeholder, 11);
-        page.drawText(placeholder, {
-          x: x + (CELL_W - pw) / 2,
-          y: y + IMG_H / 2,
-          size: 11,
+      for (let k = 0; k < sheets; k++) {
+        const slot = slotIdx % PER_PAGE;
+        if (slot === 0) page = doc.addPage(A4);
+        const col = slot % COLS;
+        const row = Math.floor(slot / COLS);
+        const x = MARGIN + col * (CELL_W + GAP_X);
+        const y = PAGE_H - MARGIN - (row + 1) * CELL_H - row * GAP_Y;
+
+        // 그룹이면 (1/2), (2/2) 인덱스 부여 — 시각적 구분
+        const label = makeLabel(e) + (grouped ? ` (${k + 1}/${sheets})` : "");
+        let fontSize = 9;
+        while (fontSize > 6 && font.widthOfTextAtSize(label, fontSize) > CELL_W) fontSize -= 1;
+        page.drawText(label, {
+          x: x,
+          y: y + CELL_H - 4 * MM,
+          size: fontSize,
           font,
-          color: rgb(0.5, 0.5, 0.5),
+          color: rgb(0, 0, 0),
         });
+
+        if (r) {
+          const dataUrl = grouped ? r.groupedThumbnails[k].dataUrl : r.dataUrl;
+          const { bytes, width, height } = await dataUrlToImageBytes(dataUrl);
+          const img = await doc.embedJpg(bytes);
+          const scale = Math.min(CELL_W / width, IMG_H / height);
+          const iw = width * scale;
+          const ih = height * scale;
+          const ix = x + (CELL_W - iw) / 2;
+          const iy = y + (IMG_H - ih) / 2;
+          page.drawImage(img, { x: ix, y: iy, width: iw, height: ih });
+        } else {
+          // Dashed placeholder
+          page.drawRectangle({
+            x, y, width: CELL_W, height: IMG_H,
+            borderColor: rgb(0.7, 0.7, 0.7),
+            borderWidth: 0.5,
+            borderDashArray: [3, 3],
+          });
+          const placeholder = "[ 영수증 누락 ]";
+          const pw = font.widthOfTextAtSize(placeholder, 11);
+          page.drawText(placeholder, {
+            x: x + (CELL_W - pw) / 2,
+            y: y + IMG_H / 2,
+            size: 11,
+            font,
+            color: rgb(0.5, 0.5, 0.5),
+          });
+        }
+        slotIdx++;
       }
     }
 
