@@ -185,8 +185,7 @@
     color: var(--primary);
   }
   /* 그룹 영수증 (쿠팡 vendor 분할 등) — 토글로 N장 펼침 */
-  .receipt-cell.grouped .grouped-collapsed,
-  .receipt-cell.grouped .grouped-expanded {
+  .receipt-cell.grouped .grouped-collapsed {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -194,11 +193,14 @@
     width: 100%;
   }
   .receipt-cell.grouped .grouped-expanded {
-    display: grid;
+    display: none;        /* 기본 숨김 — .expanded 클래스 붙으면 보임 */
     grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
     gap: 4px;
     padding: 4px;
+    width: 100%;
   }
+  .receipt-cell.grouped.expanded .grouped-collapsed { display: none; }
+  .receipt-cell.grouped.expanded .grouped-expanded { display: grid; }
   .receipt-cell.grouped .grouped-expanded img {
     width: 100%;
     max-width: none;
@@ -836,9 +838,9 @@ function renderEntries() {
         drop.innerHTML = `
           <div class="grouped-collapsed">
             <img src="${r.groupedThumbnails[0].dataUrl}" alt="" data-gidx="0">
-            <button class="group-toggle" type="button">📎 +${n - 1}장 ▼</button>
+            <button class="group-toggle" type="button">📎 ${n}장 ▼</button>
           </div>
-          <div class="grouped-expanded" hidden>
+          <div class="grouped-expanded">
             ${r.groupedThumbnails.map((t, i) => `<img src="${t.dataUrl}" alt="" title="${escapeHtml(t.name)}" data-gidx="${i}">`).join("")}
             <button class="group-collapse" type="button">▲ 접기</button>
           </div>
@@ -847,14 +849,10 @@ function renderEntries() {
         drop.querySelector(".group-toggle").addEventListener("click", ev => {
           ev.stopPropagation();
           drop.classList.add("expanded");
-          drop.querySelector(".grouped-collapsed").hidden = true;
-          drop.querySelector(".grouped-expanded").hidden = false;
         });
         drop.querySelector(".group-collapse").addEventListener("click", ev => {
           ev.stopPropagation();
           drop.classList.remove("expanded");
-          drop.querySelector(".grouped-collapsed").hidden = false;
-          drop.querySelector(".grouped-expanded").hidden = true;
         });
         drop.querySelectorAll("img").forEach(img => {
           img.addEventListener("click", ev => {
