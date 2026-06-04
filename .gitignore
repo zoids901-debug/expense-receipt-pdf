@@ -1,0 +1,5 @@
+
+# wrangler 로컬 캐시 (계정정보 포함, 동기화 금지)
+.wrangler/
+worker/.wrangler/
+node_modules/
