@@ -1,22 +1,26 @@
 name = "expense-receipt-vision"
 main = "src/index.js"
-compatibility_date = "2026-01-01"
+compatibility_date = "2026-05-11"
+preview_urls = false
+
+[observability]
+enabled = true
+[observability.logs]
+enabled = true
 
 # Public origin allowlist (free to override per-deployment via `wrangler secret put`)
 [vars]
 ALLOWED_ORIGINS = "https://zoids901-debug.github.io"
 
-# 학습 로그 저장용 KV. 1회만:
-#   wrangler kv namespace create LOGS
-# → 출력된 id를 아래 id="" 에 붙여넣고 wrangler deploy
+# 학습 로그 저장용 KV (실패/정답 수집)
 [[kv_namespaces]]
 binding = "LOGS"
-id = "PUT_LOGS_KV_ID_HERE"
+id = "d941765eda294f75a965d72528b388ce"
 
-# 월 OCR 카운터 KV (이미 대시보드에서 바인딩돼 있으면 생략 가능)
-# [[kv_namespaces]]
-# binding = "COUNTER"
-# id = "PUT_COUNTER_KV_ID_HERE"
+# 월 OCR 카운터 KV (기존 vision-counter — 반드시 유지)
+[[kv_namespaces]]
+binding = "COUNTER"
+id = "a38191115b624fa2ac3655cd7f4b38bd"
 
 # API key set via:
 #   wrangler secret put GOOGLE_VISION_API_KEY

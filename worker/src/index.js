@@ -38,8 +38,9 @@ export default {
     // 관리자용: 수집된 학습 로그 덤프 (GET ?dump=<LOG_TOKEN>) — 토큰으로만 접근, 브라우저 Origin 불필요
     if (request.method === "GET") {
       const url = new URL(request.url);
-      const tok = url.searchParams.get("dump");
-      if (!env.LOG_TOKEN || tok !== env.LOG_TOKEN) return json({ error: "forbidden" }, 403, cors);
+      const tok = (url.searchParams.get("dump") || "").trim();
+      const want = (env.LOG_TOKEN || "").trim();
+      if (!want || tok !== want) return json({ error: "forbidden" }, 403, cors);
       if (!env.LOGS) return json({ count: 0, events: [] }, 200, cors);
       const cursor = url.searchParams.get("cursor") || undefined;
       const list = await env.LOGS.list({ prefix: "ev:", limit: 1000, cursor });
