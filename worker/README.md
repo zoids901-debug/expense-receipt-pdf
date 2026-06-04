@@ -39,6 +39,30 @@ wrangler deploy
 - Google Vision: https://console.cloud.google.com/apis/dashboard
 - Cloudflare Worker: https://dash.cloudflare.com → Workers & Pages → Analytics
 
+## 6. 학습 로그 수집 (실패/정답 모으기)
+
+자동매칭 **실패/의심** 사례와, 사용자가 **손으로 고친 정답**을 한곳에 모아 매칭 규칙을 개선하는 용도. 비용 0 (KV 무료 한도).
+
+### 설정 (1회)
+```bash
+cd worker
+wrangler kv namespace create LOGS
+# → 출력된 id 를 wrangler.toml 의 [[kv_namespaces]] binding="LOGS" id="..." 에 붙여넣기
+
+wrangler secret put LOG_TOKEN
+# → 아무 긴 비밀문자열 입력 (덤프 볼 때 쓰는 열쇠)
+
+wrangler deploy
+```
+
+### 모인 로그 보기
+브라우저에서:
+```
+https://expense-receipt-vision.<account>.workers.dev/?dump=<LOG_TOKEN>
+```
+JSON으로 전체 이벤트가 나옴. `type: "automatch"`(실패/의심) 와 `type: "correction"`(수동 정답)을 보고 규칙을 개선.
+보관 기간 180일 자동 만료.
+
 ## 5. 도메인 제한 (보안)
 `wrangler.toml`의 `ALLOWED_ORIGINS`에 허용 도메인을 콤마 구분으로:
 ```toml

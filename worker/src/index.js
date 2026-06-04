@@ -34,6 +34,23 @@ export default {
     };
 
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+
+    // 관리자용: 수집된 학습 로그 덤프 (GET ?dump=<LOG_TOKEN>) — 토큰으로만 접근, 브라우저 Origin 불필요
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+      const tok = url.searchParams.get("dump");
+      if (!env.LOG_TOKEN || tok !== env.LOG_TOKEN) return json({ error: "forbidden" }, 403, cors);
+      if (!env.LOGS) return json({ count: 0, events: [] }, 200, cors);
+      const cursor = url.searchParams.get("cursor") || undefined;
+      const list = await env.LOGS.list({ prefix: "ev:", limit: 1000, cursor });
+      const events = [];
+      for (const k of list.keys) {
+        const v = await env.LOGS.get(k.name);
+        if (v) { try { events.push(JSON.parse(v)); } catch {} }
+      }
+      return json({ count: events.length, cursor: list.list_complete ? null : list.cursor, events }, 200, cors);
+    }
+
     if (request.method !== "POST") return json({ error: "POST only" }, 405, cors);
     if (!allowOrigin) return json({ error: "origin not allowed" }, 403, cors);
 
@@ -50,6 +67,22 @@ export default {
       const yearMonth = new Date().toISOString().slice(0, 7);
       const current = parseInt(await env.COUNTER.get(`count:${yearMonth}`) || "0", 10);
       return json({ used: current, limit: MONTHLY_LIMIT, remaining: MONTHLY_LIMIT - current }, 200, cors);
+    }
+
+    // 학습용 실패/정답 로그 수집 (OCR 호출 X, 월 쿼터 차감 X)
+    if (body.event) {
+      if (!env.LOGS) return json({ ok: false, error: "no LOGS store" }, 200, cors);
+      try {
+        const ts = new Date().toISOString();
+        const ym = ts.slice(0, 7);
+        const rand = Math.random().toString(36).slice(2, 8);
+        await env.LOGS.put(`ev:${ym}:${ts}:${rand}`,
+          JSON.stringify({ ts, origin, ...body.event }),
+          { expirationTtl: 180 * 86400 });
+        return json({ ok: true }, 200, cors);
+      } catch (e) {
+        return json({ ok: false, error: String(e).slice(0, 200) }, 200, cors);
+      }
     }
 
     let image = body.image || "";

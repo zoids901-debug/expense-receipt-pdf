@@ -971,6 +971,19 @@ function assignToEntry(entryIdx, receiptId, fromEntryIdx) {
   }
   renderEntries();
   renderReceipts();
+  // 수동 매칭 = 정답 라벨 (OCR 거친 영수증만 가치 있음). 자동매칭이 놓친 케이스의 정답.
+  const r = state.receipts.get(receiptId);
+  if (r && r.ocrText) {
+    reportEvent({
+      type: "correction",
+      autoKind: (state.lastAutoByName && state.lastAutoByName[r.name]) || null,
+      receipt: r.name,
+      ocrText: r.ocrText,
+      ocrAmounts: r.ocrAmounts || [],
+      ocrDates: r.ocrDates || [],
+      answer: { date: target.date, cat: target.category, amt: target.amount, vendor: target.vendor, memo: target.memo },
+    });
+  }
 }
 
 function unassignFromEntry(entryIdx) {
@@ -1417,6 +1430,21 @@ function setOcrSettings({ engine, workerUrl }) {
   if (workerUrl !== undefined) localStorage.setItem("ocrWorkerUrl", workerUrl);
 }
 
+// 학습용 로그 전송 — 실패/의심 매칭, 수동 정답을 Worker로 보냄(있을 때만).
+// 수집 실패는 조용히 무시: 사용자 작업에 절대 영향 주지 않음.
+async function reportEvent(event) {
+  try {
+    const { workerUrl } = getOcrSettings();
+    if (!workerUrl) return;
+    await fetch(workerUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event }),
+      keepalive: true,
+    });
+  } catch (_) { /* noop */ }
+}
+
 // Run OCR on image, returning text. Picks engine based on settings.
 async function runOcr(dataUrl) {
   const { engine, workerUrl } = getOcrSettings();
@@ -1781,10 +1809,15 @@ async function autoMatch() {
           const rawText = await runOcr(r.dataUrl);
           const feat = extractFeaturesFromText(r, rawText);
           features[i] = feat;
+          // 수동 정답 수집용으로 OCR 결과를 영수증에 보관
+          r.ocrText = rawText;
+          r.ocrAmounts = [...feat.allAmounts];
+          r.ocrDates = [...feat.dates];
           // Try real-time assignment for confident matches
           tryRealtimeAssign(feat);
         } catch (e) {
           console.warn("OCR failed:", r.name, e);
+          r.ocrText = ""; r.ocrError = true;
           features[i] = {
             receipt: r, ocrText: "", ocrNorm: "", error: true,
             totalAmounts: new Set(), tailAmounts: new Set(),
@@ -1839,6 +1872,7 @@ async function autoMatch() {
       matchLog.push({
         kind,
         receipt: feat.receipt.name,
+        ocrText: feat.ocrText,
         ocrAmounts: [...feat.allAmounts],
         ocrDates: [...feat.dates],
         target: { num: p.ei + 1, date: entry.date.slice(5), cat: entry.category, amt: entry.amount, vendor: entry.vendor },
@@ -1856,6 +1890,7 @@ async function autoMatch() {
       matchLog.push({
         kind: "fail",
         receipt: feat.receipt.name,
+        ocrText: feat.ocrText,
         ocrAmounts: [...feat.allAmounts],
         ocrDates: [...feat.dates],
         target: null,
@@ -1885,6 +1920,18 @@ async function autoMatch() {
     if (remaining) msg += `, ${remaining}건 못 찾음(직접 드래그 필요)`;
     setStatus(msg, "success");
     renderMatchLog(matchLog);
+    // 학습용 수집: 자동매칭 결과 기록(수동 정답 라벨링에 사용) + 실패/의심 사례 전송
+    state.lastAutoByName = {};
+    for (const l of matchLog) state.lastAutoByName[l.receipt] = l.kind;
+    const learnable = matchLog.filter(l => l.kind === "fail" || l.kind === "suspect");
+    if (learnable.length) {
+      reportEvent({
+        type: "automatch",
+        fmt: state.fmt || null,
+        entries: state.entries.map(e => ({ date: e.date, cat: e.category, amt: e.amount, vendor: e.vendor, memo: e.memo, matched: !!e.receiptId })),
+        cases: learnable,
+      });
+    }
     setTimeout(() => setProgress(false), 2000);
   } catch (err) {
     console.error(err);
