@@ -622,7 +622,7 @@ const CATEGORIES = new Set([
   "여비교통비", "베이커리개발비", "커피개발비", "메뉴개발비", "복리후생비",
   "통신비", "소모품비", "접대비", "광고선전비", "교육훈련비",
   "수수료", "운반비", "도서인쇄비", "회의비", "차량유지비",
-  "사무용품비", "지급수수료", "외주용역비",
+  "사무용품비", "지급수수료", "외주용역비", "업무활동비",
 ]);
 const SUPPORTED_EXT = ["jpg", "jpeg", "png", "pdf", "bmp", "webp"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -658,7 +658,9 @@ function parseA(raw) {
     let cells = line.split("\t").map(c => c.trim());
     if (cells.includes("소계") || cells.includes("합계")) continue;
     while (cells.length && cells[cells.length - 1] === "") cells.pop();
-    if (cells.length && CATEGORIES.has(cells[0])) {
+    while (cells.length && cells[0] === "") cells.shift();
+    // 첫 칸이 날짜도 금액도 아니면 = 계정과목 헤더 줄 (화이트리스트에 없는 새 계정과목도 인식)
+    if (cells.length && !DATE_RE.test(cells[0]) && !AMOUNT_RE.test(cells[0])) {
       cur = cells[0];
       cells = cells.slice(1);
     }
